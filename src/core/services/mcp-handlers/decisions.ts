@@ -10,6 +10,7 @@
 
 import { spawn } from 'node:child_process';
 import { validateDirectory, sanitizeMcpError } from './utils.js';
+import { emit } from '../telemetry.js';
 import {
   loadDecisionStore,
   saveDecisionStore,
@@ -208,6 +209,7 @@ export async function handleApproveDecision(
       reviewNote: note,
     });
     await saveDecisionStore(rootPath, updated);
+    emit(rootPath, 'decisions', { event: 'decision_approved', id, title: decision.title });
 
     return { id, status: 'approved', title: decision.title };
   } catch (err) {
@@ -237,6 +239,7 @@ export async function handleRejectDecision(
       reviewNote: note,
     });
     await saveDecisionStore(rootPath, updated);
+    emit(rootPath, 'decisions', { event: 'decision_rejected', id, title: decision.title });
 
     return { id, status: 'rejected', title: decision.title };
   } catch (err) {
@@ -276,6 +279,8 @@ export async function handleSyncDecisions(
       specMap,
       dryRun,
     });
+
+    emit(rootPath, 'decisions', { event: 'decisions_synced', count: result.synced.length, dry_run: dryRun });
 
     return {
       synced: result.synced.map((d) => ({ id: d.id, title: d.title, specs: d.syncedToSpecs })),
