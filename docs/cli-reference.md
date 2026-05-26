@@ -189,3 +189,12 @@ Checks performed:
 
 Run `openlore doctor` whenever setup instructions aren't working — it tells you exactly what to fix and how.
 
+---
+
+## Developer Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run bench` | EdgeStore micro-benchmark (node lookup, BFS, orient path) — requires `openlore analyze` |
+| `npm run bench:mcp` | MCP handler benchmark — measures cold vs warm path for `readCachedContext`, `handleOrient`, `handleSearchCode`. Requires `openlore analyze`. Pass a project dir: `npm run bench:mcp -- /path/to/project` |
+
