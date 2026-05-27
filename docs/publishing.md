@@ -2,18 +2,23 @@
 
 OpenLore uses **npm Trusted Publishing** (OIDC) so the package is published from CI with no long-lived npm token in any secret store, shell, or laptop. Every published version carries a signed [npm provenance](https://docs.npmjs.com/generating-provenance-statements) attestation linking it to the exact GitHub Actions run that built it.
 
-The CI workflow that does the publish lives at [.github/workflows/release.yml](../.github/workflows/release.yml) and fires automatically when a GitHub Release is published.
+The CI workflow that does the publish lives at [.github/workflows/release.yml](../.github/workflows/release.yml) and fires automatically when a `vX.Y.Z` tag is pushed (it also still fires if you publish a GitHub Release by hand).
 
 ## How a release happens
 
 1. Bump the version locally: `npm version <patch|minor|major>` (this creates a `vX.Y.Z` tag).
 2. `git push --follow-tags` to push both the bump commit and the tag.
-3. On GitHub: **Releases → Draft a new release → choose the `vX.Y.Z` tag → Publish release**.
-4. The `Release` workflow runs:
+3. That's it. Pushing the tag triggers the `Release` workflow, which:
    - `validate` — re-runs `lint`, `typecheck`, `test:run`, `build` against the tagged commit.
+   - `create-release` — creates the GitHub Release for the tag with auto-generated notes (idempotent: skipped if a Release for that tag already exists). Created with `GITHUB_TOKEN`, so it does **not** re-trigger the workflow.
    - `publish` — re-builds and runs `npm publish --provenance --access public`. No token; the OIDC handshake with npm authenticates the run.
 
-Manual re-run path if a publish fails mid-way: use **Actions → Release → Run workflow** and pass the tag.
+If the `npm-publish` environment has a required reviewer, the `publish` job pauses for a human approval click before it can mint the OIDC token.
+
+### Alternative paths
+
+- **Publish a GitHub Release by hand** (Releases → Draft a new release → pick the tag → Publish): the `create-release` job is skipped (the Release already exists) and `publish` runs.
+- **Re-run a failed publish**: **Actions → Release → Run workflow** and pass the tag (`workflow_dispatch`).
 
 ## One-time setup (do this once, then never again)
 

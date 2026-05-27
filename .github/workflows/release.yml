@@ -1,14 +1,24 @@
 name: Release
 
-# Publishes `openlore` to npm with provenance whenever a GitHub Release is
-# published from this repo, using npm Trusted Publishing (OIDC) — no
-# long-lived NPM_TOKEN required. See docs/publishing.md for the one-time
-# setup steps on the npmjs.com side.
+# Publishes `openlore` to npm with provenance using npm Trusted Publishing
+# (OIDC) — no long-lived NPM_TOKEN required. See docs/publishing.md for the
+# one-time setup steps on the npmjs.com side.
 #
-# Manual fallback: `workflow_dispatch` lets a maintainer re-publish a
-# specific tag if a prior automated run failed mid-way.
+# Triggers (any of these runs validate → [create GitHub Release] → publish):
+#   - push of a `v*` tag  — the normal path. Pushing the tag auto-creates the
+#     GitHub Release (with generated notes) and publishes to npm in one run.
+#   - a GitHub Release published manually in the UI — the create-release job is
+#     skipped (the Release already exists) and publish runs.
+#   - workflow_dispatch — manual re-publish of an existing tag if a prior run
+#     failed mid-way.
+#
+# Note on the no-double-run: a Release created by this workflow with the default
+# GITHUB_TOKEN does NOT emit a `release: published` event, so the tag-push path
+# does not re-trigger itself via the release trigger.
 
 on:
+  push:
+    tags: ['v*']
   release:
     types: [published]
   workflow_dispatch:
@@ -25,8 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # On workflow_dispatch, check out the explicitly-named tag.
-          # On release events, the default ref already points at the tag.
+          # workflow_dispatch → the explicitly-named tag.
+          # push (tag) and release events → github.ref already points at the tag.
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
@@ -48,20 +58,52 @@ jobs:
       - name: Build
         run: npm run build
 
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: validate
+    # Only the tag-push path creates the Release. On `release: published` the
+    # Release already exists; on workflow_dispatch we re-publish an existing tag.
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      # Create the Release for this tag with auto-generated notes, unless one
+      # already exists (idempotent — safe to re-run). Created with GITHUB_TOKEN,
+      # so it deliberately does NOT fire another `release: published` run.
+      - name: Create release if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — skipping creation."
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+          fi
+
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
-    needs: validate
-    # `id-token: write` is required for npm Trusted Publishing (OIDC) and
-    # for `npm publish --provenance` to mint an attestation. We deliberately
-    # do NOT request `contents: write` — the GitHub Release already exists
-    # before this workflow runs, so no release-creation step is needed.
+    needs: [validate, create-release]
+    # Run after validate succeeds and create-release either succeeded (tag-push)
+    # or was skipped (release / workflow_dispatch paths).
+    if: |
+      always() &&
+      needs.validate.result == 'success' &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    # `id-token: write` is required for npm Trusted Publishing (OIDC) and for
+    # `npm publish --provenance` to mint an attestation.
     permissions:
       contents: read
       id-token: write
-    # Scopes the OIDC token to a named environment so npm's Trusted
-    # Publisher config can require it. Create this environment under
-    # repo Settings → Environments before enabling Trusted Publishing.
+    # Scopes the OIDC token to a named environment so npm's Trusted Publisher
+    # config can require it. Create this environment under repo
+    # Settings → Environments before enabling Trusted Publishing.
     environment:
       name: npm-publish
       url: https://www.npmjs.com/package/openlore

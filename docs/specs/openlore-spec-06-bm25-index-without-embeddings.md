@@ -195,9 +195,17 @@ CI Unit Tests job now builds a BM25-only index for a tiny fixture and asserts th
 `src/core/services/mcp-handlers/bm25-no-embeddings.test.ts`. This makes a silent re-regression
 impossible without a failing CI check.
 
+### Release automation (folded in by maintainer request — one-time scope exception)
+
+Normally a release-workflow change would live in its own PR (it is unrelated to the BM25 index).
+By explicit maintainer request it is included here as a one-time exception. `release.yml` now also
+triggers on a `v*` tag push: the workflow runs `validate` → `create-release` (auto-generates the
+GitHub Release notes, idempotent) → `publish` to npm, so pushing a tag is the entire release flow.
+The existing "publish a Release by hand" and `workflow_dispatch` paths still work, and a Release
+created by the workflow with `GITHUB_TOKEN` does not re-trigger the workflow. `docs/publishing.md`
+is updated to match. Files: `.github/workflows/release.yml`, `docs/publishing.md`.
+
 ### Remaining follow-ups (out of scope here)
 
 - The `analyze_impact` FTS multi-match shape (`{ matches }`) vs. flat result is a separate
   handler/test contract question worth revisiting.
-- Tag-triggered release automation (push `vX.Y.Z` → auto GitHub Release → npm publish) is being
-  handled in a **separate PR**, not here — it is a release-workflow change unrelated to the BM25 index.
