@@ -7,3 +7,9 @@ defmodule Service do
     Enum.count([1, 2, 3])
   end
 end
+
+defmodule Client do
+  def go do
+    Service.run()
+  end
+end

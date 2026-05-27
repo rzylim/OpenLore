@@ -23,8 +23,13 @@ describe('spec-08 additional languages', () => {
     const g = await buildOne('csharp/App.cs', 'C#');
     expect(fnNames(g, 'C#')).toEqual(['Boot', 'Helper', 'Log', 'Run']);
     expect(edge(g, 'Run', 'Helper')).toBe(true);   // this.Helper()
-    expect(edge(g, 'Run', 'Log')).toBe(true);      // Util.Log()
-    expect(g.classes.some(c => c.name === 'Service' && c.methodIds.length >= 2)).toBe(true);
+    expect(edge(g, 'Run', 'Log')).toBe(true);      // Util.Log() static call
+    // ClassNode groups its methods: Service.methodIds references both Run and Helper.
+    const service = g.classes.find(c => c.name === 'Service');
+    const run = g.nodes.find(n => n.name === 'Run')!;
+    const helper = g.nodes.find(n => n.name === 'Helper')!;
+    expect(service?.methodIds).toContain(run.id);
+    expect(service?.methodIds).toContain(helper.id);
   });
 
   it('Kotlin — members + extension function + calls', async () => {
@@ -35,6 +40,7 @@ describe('spec-08 additional languages', () => {
     expect(g.nodes.find(n => n.name === 'shout')?.className).toBe('String');
     expect(edge(g, 'run', 'helper')).toBe(true);
     expect(edge(g, 'main', 'run')).toBe(true);
+    expect(edge(g, 'main', 'shout')).toBe(true);  // "hi".shout() extension call resolves
   });
 
   it('PHP — $this->m(), Class::m(), free function calls', async () => {
@@ -63,11 +69,13 @@ describe('spec-08 additional languages', () => {
     expect(g.classes.some(c => c.name === 'Service')).toBe(true);
   });
 
-  it('Elixir — defmodule grouping, def/defp, local call', async () => {
+  it('Elixir — defmodule grouping, def/defp, local + remote (Mod.fun) calls', async () => {
     const g = await buildOne('elixir/app.ex', 'Elixir');
-    expect(fnNames(g, 'Elixir')).toEqual(['helper', 'run']);
-    expect(edge(g, 'run', 'helper')).toBe(true);
+    expect(fnNames(g, 'Elixir')).toEqual(['go', 'helper', 'run']);
+    expect(edge(g, 'run', 'helper')).toBe(true);   // local fun()
+    expect(edge(g, 'go', 'run')).toBe(true);        // remote Service.run()
     expect(g.classes.some(c => c.name === 'Service')).toBe(true);
+    expect(g.classes.some(c => c.name === 'Client')).toBe(true);
   });
 
   it('Bash — defined-function call, NO edge to external binaries', async () => {
@@ -81,4 +89,15 @@ describe('spec-08 additional languages', () => {
   // Dart and Lua (WASM-backed) live in their own test files — vitest's module
   // sandbox corrupts web-tree-sitter's shared WASM heap when two grammars run in
   // one file (production node does not; see extra-languages-{dart,lua}.test.ts).
+
+  // Guards the precise bug spec-08 fixes: these four were detected by
+  // detectLanguage but had no dispatch branch, yielding counted-but-empty graphs.
+  it('phantom-regression: C#, Kotlin, PHP, C never return an empty graph', async () => {
+    for (const [rel, lang] of [['csharp/App.cs', 'C#'], ['kotlin/App.kt', 'Kotlin'], ['php/app.php', 'PHP'], ['c/app.c', 'C']] as const) {
+      const g = await buildOne(rel, lang);
+      expect(g.nodes.filter(n => n.language === lang && !n.isExternal).length).toBeGreaterThan(0);
+      const calls = g.edges.filter(e => !e.kind || e.kind === 'calls');
+      expect(calls.length).toBeGreaterThan(0);
+    }
+  });
 });

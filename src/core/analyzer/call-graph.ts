@@ -1994,9 +1994,11 @@ async function extractElixirGraph(
       if (target?.type === 'identifier' && !ELIXIR_DEF_KEYWORDS.has(target.text)) {
         calls.push({ name: target.text, pos: node.startIndex, row: node.startPosition.row });
       } else if (target?.type === 'dot') {
+        // Remote `Mod.fun(...)`: emit the function name only (no receiver), so
+        // name-based resolution can match an in-project function (matching how
+        // the other spec-08 languages resolve member/static calls).
         const right = target.childForFieldName('right') ?? target.namedChildren[target.namedChildren.length - 1];
-        const left = target.childForFieldName('left') ?? target.namedChildren[0];
-        if (right) calls.push({ name: right.text, object: left?.text, pos: node.startIndex, row: node.startPosition.row });
+        if (right) calls.push({ name: right.text, pos: node.startIndex, row: node.startPosition.row });
       }
     }
     for (const child of node.namedChildren) walk(child, moduleName);

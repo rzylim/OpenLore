@@ -12,4 +12,5 @@ fun String.shout(): String {
 fun main() {
     val s = Service()
     s.run()
+    val loud = "hi".shout()
 }
