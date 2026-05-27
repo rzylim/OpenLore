@@ -220,16 +220,29 @@ branch → counted-but-empty graphs. They now produce real nodes and edges. The
 `.h` ambiguity is resolved by `resolveHeaderLanguage` (tested): C-only project →
 C; any C++ source present → C++; standalone → C++.
 
-### Grammar / environment notes (native ABI)
+### Grammar / environment notes (native ABI + WASM backend)
 
 Host `tree-sitter` is pinned at 0.22.4 (ABI 14); node 25 cannot compile
-`tree-sitter` 0.25 from source in this environment. Grammar versions were pinned
-to ABI-14 prebuilds where needed: `tree-sitter-c-sharp@0.23.1`,
+`tree-sitter` 0.25 from source here. Native grammar versions were pinned to
+ABI-14 prebuilds where needed: `tree-sitter-c-sharp@0.23.1`,
 `tree-sitter-php@0.23.12`, `tree-sitter-c@0.23.6`, `tree-sitter-bash@0.23.3`;
-Kotlin/Scala/Elixir load at their latest. **Lua and Dart ship only ABI-15
-builds**, so in this environment they exercise the graceful-degradation path
-(implemented + tested) and graph wherever an ABI-15 host binding is available.
-Seven languages extract fully here; all nine are wired end to end.
+Kotlin/Scala/Elixir load natively at latest (7 languages, native).
+
+**Lua and Dart have no ABI-14-compatible native build**, so rather than ship
+them as detection-only, they load a **portable WASM grammar** (`tree-sitter-wasms`)
+through **`web-tree-sitter`** (`loadWasmGrammarSoft` → unified `GrammarHandle`).
+This makes all nine languages **actually extract**, not just degrade. Notes:
+- WASM trees/queries hold WASM-heap memory; `withTree` disposes them per parse
+  (`tree.delete()`), or repeated parses corrupt the heap.
+- The WASM bytes are read by us and handed to `Language.load(Uint8Array)` so
+  web-tree-sitter never does its own `require("fs/promises")` (ESM-unfriendly).
+- Dart's grammar puts `function_body` as a *sibling* of `function_signature`,
+  so Dart uses a custom walk (spans signature+body) rather than the generic
+  query extractor.
+- Vitest's module sandbox corrupts the shared WASM heap when two WASM grammars
+  run in one test file (production node does not), so the Dart and Lua tests
+  live in separate files. If even the WASM backend is unavailable, both still
+  degrade gracefully (tested).
 
 ### Verified
 
@@ -242,8 +255,6 @@ suite green, existing extractors untouched), and `lint`/`typecheck`/`test:run`/
 
 ### Follow-ups (`TODO(spec-08-followup)`)
 
-- Lua/Dart: pick up real extraction once an ABI-15 host `tree-sitter` is
-  buildable on the CI node version (code + fixtures already in place).
 - Bash `source`/`.` as file-level dependency edges.
 - Stage-1 regex signatures per new language (call-graph already feeds search).
 - Deferred languages (Objective-C, Perl, Haskell, Clojure, F#, Groovy, OCaml,

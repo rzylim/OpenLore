@@ -1490,52 +1490,160 @@ async function extractSwiftGraph(
 // missing/ABI-incompatible grammar logs one warning and skips graphing for that
 // language without aborting analyze or any other language.
 
-const _grammarCache = new Map<string, { parser: Parser; lang: object } | null>();
 const _warnedUnavailable = new Set<string>();
 
-/** Lazy, cached, soft-failing grammar loader. Returns null when unavailable. */
+/**
+ * Minimal structural node/match interface shared by native tree-sitter and the
+ * web-tree-sitter (WASM) backend, so one extractor works against either.
+ */
+interface TsNodeLike {
+  type: string;
+  text: string;
+  startIndex: number;
+  endIndex: number;
+  startPosition: { row: number };
+  parent: TsNodeLike | null;
+  namedChildren: TsNodeLike[];
+  previousNamedSibling: TsNodeLike | null;
+  nextNamedSibling: TsNodeLike | null;
+  childForFieldName(name: string): TsNodeLike | null;
+}
+interface TsMatch { captures: Array<{ name: string; node: TsNodeLike }> }
+/**
+ * Uniform grammar handle. `withTree` parses, exposes the root + a query runner,
+ * and guarantees cleanup afterward — essential for the WASM backend, where
+ * trees/queries hold WASM heap memory that corrupts the next parse if not freed.
+ */
+interface GrammarHandle {
+  withTree<T>(content: string, fn: (root: TsNodeLike, runQuery: (src: string) => TsMatch[]) => T): T;
+}
+
+const _grammarHandleCache = new Map<string, GrammarHandle | null>();
+let _wtsInit: Promise<unknown> | undefined;
+
+function warnUnavailable(language: string, err: unknown): null {
+  if (!_warnedUnavailable.has(language)) {
+    _warnedUnavailable.add(language);
+    logger.warning(
+      `language ${language} grammar unavailable — files will be indexed for search but not graphed (${(err as Error).message})`,
+    );
+  }
+  return null;
+}
+
+/** Native tree-sitter loader. Returns a uniform handle, or null when unavailable. */
 async function loadGrammarSoft(
   language: string,
   importer: () => Promise<unknown>,
   pick: (m: Record<string, unknown>) => unknown,
-): Promise<{ parser: Parser; lang: object } | null> {
-  if (_grammarCache.has(language)) return _grammarCache.get(language)!;
+): Promise<GrammarHandle | null> {
+  if (_grammarHandleCache.has(language)) return _grammarHandleCache.get(language)!;
   try {
     const mod = (await importer()) as Record<string, unknown>;
     const lang = pick(mod) as object;
     if (!lang) throw new Error('grammar export resolved to undefined');
     const parser = new Parser();
     parser.setLanguage(lang as unknown as Parser.Language);
-    const entry = { parser, lang };
-    _grammarCache.set(language, entry);
-    return entry;
+    const handle: GrammarHandle = {
+      withTree: (content, fn) => {
+        const tree = (parser as Parser).parse(content);
+        const root = tree.rootNode as unknown as TsNodeLike;
+        const runQuery = (src: string): TsMatch[] => {
+          try {
+            const q = new Parser.Query(lang as unknown as Parser.Language, src);
+            return q.matches(tree.rootNode) as unknown as TsMatch[];
+          } catch { return []; }
+        };
+        return fn(root, runQuery);
+      },
+    };
+    _grammarHandleCache.set(language, handle);
+    return handle;
   } catch (err) {
-    if (!_warnedUnavailable.has(language)) {
-      _warnedUnavailable.add(language);
-      logger.warning(
-        `language ${language} grammar unavailable — files will be indexed for search but not graphed (${(err as Error).message})`,
-      );
+    _grammarHandleCache.set(language, warnUnavailable(language, err));
+    return null;
+  }
+}
+
+/**
+ * WASM grammar loader via web-tree-sitter (ABI-agnostic, portable). Used for
+ * grammars with no host-ABI-compatible native build (Dart, Lua). Soft-fails.
+ */
+async function loadWasmGrammarSoft(
+  language: string,
+  wasmSpecifier: string,
+): Promise<GrammarHandle | null> {
+  const cacheKey = `wasm:${language}`;
+  if (_grammarHandleCache.has(cacheKey)) return _grammarHandleCache.get(cacheKey)!;
+  try {
+    const { createRequire } = await import('node:module');
+    const { readFile } = await import('node:fs/promises');
+    const req = createRequire(import.meta.url);
+    const wasmPath = req.resolve(wasmSpecifier);
+    // Load the wasm bytes ourselves and hand web-tree-sitter a Uint8Array, so it
+    // never does its own `require("fs/promises")` (which breaks under ESM/vitest).
+    const wasmBytes = new Uint8Array(await readFile(wasmPath));
+    const TS = (await import('web-tree-sitter')) as unknown as Record<string, unknown>;
+    const ParserCtor = (TS.default ?? TS.Parser ?? TS) as {
+      new (): { setLanguage(l: unknown): void; parse(s: string): { rootNode: TsNodeLike } };
+      init?: () => Promise<void>;
+      Language?: { load(p: Uint8Array): Promise<{ query(src: string): { matches(root: TsNodeLike): TsMatch[] } }> };
+    };
+    if (typeof ParserCtor.init === 'function') {
+      _wtsInit ??= ParserCtor.init();
+      await _wtsInit;
     }
-    _grammarCache.set(language, null);
+    const LanguageNs = (TS.Language ?? ParserCtor.Language) as { load(p: Uint8Array): Promise<{ query(src: string): { matches(root: TsNodeLike): TsMatch[] } }> };
+    const lang = await LanguageNs.load(wasmBytes) as {
+      query(src: string): { matches(root: TsNodeLike): TsMatch[]; delete?: () => void };
+    };
+    const handle: GrammarHandle = {
+      withTree: (content, fn) => {
+        // Fresh parser + explicit tree/query disposal: web-tree-sitter holds the
+        // parse tree in WASM heap, which corrupts the next parse if not freed.
+        const p = new ParserCtor() as { setLanguage(l: unknown): void; parse(s: string): { rootNode: TsNodeLike; delete?: () => void }; delete?: () => void };
+        p.setLanguage(lang);
+        const tree = p.parse(content);
+        const queries: Array<{ delete?: () => void }> = [];
+        const runQuery = (src: string): TsMatch[] => {
+          try {
+            const q = lang.query(src);
+            queries.push(q);
+            return q.matches(tree.rootNode);
+          } catch { return []; }
+        };
+        try {
+          return fn(tree.rootNode, runQuery);
+        } finally {
+          for (const q of queries) q.delete?.();
+          tree.delete?.();
+          p.delete?.();
+        }
+      },
+    };
+    _grammarHandleCache.set(cacheKey, handle);
+    return handle;
+  } catch (err) {
+    _grammarHandleCache.set(cacheKey, warnUnavailable(language, err));
     return null;
   }
 }
 
 /** Reset loader caches — test-only hook for the graceful-degradation test. */
 export function __resetGrammarCacheForTests(): void {
-  _grammarCache.clear();
+  _grammarHandleCache.clear();
   _warnedUnavailable.clear();
 }
 
 const NAME_CHILD_TYPES = new Set(['identifier', 'name', 'type_identifier', 'simple_identifier', 'word']);
 
 /** Walk up from a node to the nearest grouping construct; return its declared name. */
-function enclosingGroupName(node: Parser.SyntaxNode, classTypes: Set<string>): string | undefined {
+function enclosingGroupName(node: TsNodeLike, classTypes: Set<string>): string | undefined {
   let cursor = node.parent;
   while (cursor) {
     if (classTypes.has(cursor.type)) {
       const nameNode = cursor.namedChildren.find(c => NAME_CHILD_TYPES.has(c.type))
-        ?? cursor.childForFieldName?.('name') ?? undefined;
+        ?? cursor.childForFieldName('name') ?? undefined;
       if (nameNode) return nameNode.text;
     }
     cursor = cursor.parent;
@@ -1545,16 +1653,17 @@ function enclosingGroupName(node: Parser.SyntaxNode, classTypes: Set<string>): s
 
 interface QueryLangSpec {
   language: string;
-  loader: () => Promise<{ parser: Parser; lang: object } | null>;
+  loader: () => Promise<GrammarHandle | null>;
   fnQuery: string;
   callQuery: string;
   /** Node types that form a grouping (class/object/module). Empty = no classes. */
   classTypes: Set<string>;
   /** Optional per-language hook to compute an extra className (e.g. Kotlin receiver). */
-  extraClassName?: (fnNode: Parser.SyntaxNode) => string | undefined;
+  extraClassName?: (fnNode: TsNodeLike) => string | undefined;
   /** Optional filter: only emit a call edge when this returns true. */
   callFilter?: (calleeName: string, definedNames: Set<string>) => boolean;
 }
+
 
 /**
  * Generic query-driven extractor shared by the structurally-similar languages.
@@ -1566,53 +1675,53 @@ async function extractByQueries(
   filePath: string,
   content: string,
 ): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[] }> {
-  const loaded = await spec.loader();
-  if (!loaded) return { nodes: [], rawEdges: [] };
-  const { parser, lang } = loaded;
-  const tree = (parser as Parser).parse(content);
+  const handle = await spec.loader();
+  if (!handle) return { nodes: [], rawEdges: [] };
 
-  const nodes: FunctionNode[] = [];
-  for (const match of safeQuery(lang, spec.fnQuery, tree.rootNode)) {
-    const nameCapture = match.captures.find(c => c.name === 'fn.name');
-    const nodeCapture = match.captures.find(c => c.name === 'fn.node');
-    if (!nameCapture || !nodeCapture) continue;
-    const name = nameCapture.node.text;
-    const fnNode = nodeCapture.node;
-    const className = (spec.classTypes.size ? enclosingGroupName(fnNode, spec.classTypes) : undefined)
-      ?? spec.extraClassName?.(fnNode);
-    const id = className ? `${filePath}::${className}.${name}` : `${filePath}::${name}`;
-    if (nodes.some(n => n.id === id)) continue; // collapse multi-clause/overloads to one node
-    nodes.push({
-      id, name, filePath, className,
-      isAsync: false,
-      language: spec.language,
-      startIndex: fnNode.startIndex,
-      endIndex: fnNode.endIndex,
-      fanIn: 0, fanOut: 0,
-      signature: extractDeclaration(content, fnNode.startIndex, fnNode.endIndex, spec.language),
-    });
-  }
+  return handle.withTree(content, (_root, runQuery) => {
+    const nodes: FunctionNode[] = [];
+    for (const match of runQuery(spec.fnQuery)) {
+      const nameCapture = match.captures.find(c => c.name === 'fn.name');
+      const nodeCapture = match.captures.find(c => c.name === 'fn.node');
+      if (!nameCapture || !nodeCapture) continue;
+      const name = nameCapture.node.text;
+      const fnNode = nodeCapture.node;
+      const className = (spec.classTypes.size ? enclosingGroupName(fnNode, spec.classTypes) : undefined)
+        ?? spec.extraClassName?.(fnNode);
+      const id = className ? `${filePath}::${className}.${name}` : `${filePath}::${name}`;
+      if (nodes.some(n => n.id === id)) continue; // collapse multi-clause/overloads to one node
+      nodes.push({
+        id, name, filePath, className,
+        isAsync: false,
+        language: spec.language,
+        startIndex: fnNode.startIndex,
+        endIndex: fnNode.endIndex,
+        fanIn: 0, fanOut: 0,
+        signature: extractDeclaration(content, fnNode.startIndex, fnNode.endIndex, spec.language),
+      });
+    }
 
-  const definedNames = new Set(nodes.map(n => n.name));
-  const rawEdges: RawEdge[] = [];
-  const seen = new Set<string>();
-  for (const match of safeQuery(lang, spec.callQuery, tree.rootNode)) {
-    const nameCapture = match.captures.find(c => c.name === 'call.name');
-    const nodeCapture = match.captures.find(c => c.name === 'call.node');
-    const objectCapture = match.captures.find(c => c.name === 'call.object');
-    if (!nameCapture || !nodeCapture) continue;
-    const calleeName = nameCapture.node.text;
-    if (isIgnoredCallee(calleeName)) continue;
-    if (spec.callFilter && !spec.callFilter(calleeName, definedNames)) continue;
-    const caller = findEnclosingFunction(nodes, nodeCapture.node.startIndex);
-    if (!caller) continue;
-    const calleeObject = objectCapture?.node.text;
-    const key = `${caller.id}\0${calleeName}\0${calleeObject ?? ''}\0${nodeCapture.node.startIndex}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rawEdges.push({ callerId: caller.id, calleeName, line: nodeCapture.node.startPosition.row + 1, calleeObject });
-  }
-  return { nodes, rawEdges };
+    const definedNames = new Set(nodes.map(n => n.name));
+    const rawEdges: RawEdge[] = [];
+    const seen = new Set<string>();
+    for (const match of runQuery(spec.callQuery)) {
+      const nameCapture = match.captures.find(c => c.name === 'call.name');
+      const nodeCapture = match.captures.find(c => c.name === 'call.node');
+      const objectCapture = match.captures.find(c => c.name === 'call.object');
+      if (!nameCapture || !nodeCapture) continue;
+      const calleeName = nameCapture.node.text;
+      if (isIgnoredCallee(calleeName)) continue;
+      if (spec.callFilter && !spec.callFilter(calleeName, definedNames)) continue;
+      const caller = findEnclosingFunction(nodes, nodeCapture.node.startIndex);
+      if (!caller) continue;
+      const calleeObject = objectCapture?.node.text;
+      const key = `${caller.id}\0${calleeName}\0${calleeObject ?? ''}\0${nodeCapture.node.startIndex}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rawEdges.push({ callerId: caller.id, calleeName, line: nodeCapture.node.startPosition.row + 1, calleeObject });
+    }
+    return { nodes, rawEdges };
+  });
 }
 
 // ── C# ──────────────────────────────────────────────────────────────────────
@@ -1695,34 +1804,27 @@ const SCALA_SPEC: QueryLangSpec = {
   `,
 };
 
-// ── Dart ────────────────────────────────────────────────────────────────────
-const DART_SPEC: QueryLangSpec = {
-  language: 'Dart',
-  loader: () => loadGrammarSoft('Dart', () => import('tree-sitter-dart'), m => (m.default as { language?: object }).language ?? m.default),
-  classTypes: new Set(['class_definition', 'mixin_declaration', 'extension_declaration', 'enum_declaration']),
-  fnQuery: `
-    (function_signature name: (identifier) @fn.name) @fn.node
-    (method_signature (function_signature name: (identifier) @fn.name)) @fn.node
-  `,
-  callQuery: `
-    (selector (argument_part)) @call.node
-  `,
-};
-
-// ── Lua ─────────────────────────────────────────────────────────────────────
+// ── Lua (via bundled WASM — no ABI-compatible native build for the host) ─────
 const LUA_SPEC: QueryLangSpec = {
   language: 'Lua',
-  loader: () => loadGrammarSoft('Lua', () => import('tree-sitter-lua'), m => (m.default as { language?: object }).language ?? m.default),
+  loader: () => loadWasmGrammarSoft('Lua', 'tree-sitter-wasms/out/tree-sitter-lua.wasm'),
   classTypes: new Set(),
+  // `function t.f()` / `function t:m()` record the table name in className.
+  extraClassName: (fnNode) => {
+    const nameVar = fnNode.childForFieldName('name');
+    if (nameVar?.type === 'variable') return nameVar.childForFieldName('table')?.text;
+    return undefined;
+  },
   fnQuery: `
-    (function_declaration name: (identifier) @fn.name) @fn.node
-    (function_declaration name: (dot_index_expression field: (identifier) @fn.name)) @fn.node
-    (function_declaration name: (method_index_expression method: (identifier) @fn.name)) @fn.node
+    (local_function_definition_statement name: (identifier) @fn.name) @fn.node
+    (function_definition_statement name: (identifier) @fn.name) @fn.node
+    (function_definition_statement name: (variable field: (identifier) @fn.name)) @fn.node
+    (function_definition_statement name: (variable method: (identifier) @fn.name)) @fn.node
   `,
   callQuery: `
-    (function_call name: (identifier) @call.name) @call.node
-    (function_call name: (dot_index_expression field: (identifier) @call.name)) @call.node
-    (function_call name: (method_index_expression method: (identifier) @call.name)) @call.node
+    (call function: (variable name: (identifier) @call.name)) @call.node
+    (call function: (variable field: (identifier) @call.name)) @call.node
+    (call function: (variable method: (identifier) @call.name)) @call.node
   `,
 };
 
@@ -1743,8 +1845,89 @@ const BASH_SPEC: QueryLangSpec = {
 
 const QUERY_LANG_SPECS: Record<string, QueryLangSpec> = {
   'C#': CSHARP_SPEC, 'Kotlin': KOTLIN_SPEC, 'PHP': PHP_SPEC, 'C': C_SPEC,
-  'Scala': SCALA_SPEC, 'Dart': DART_SPEC, 'Lua': LUA_SPEC, 'Bash': BASH_SPEC,
+  'Scala': SCALA_SPEC, 'Lua': LUA_SPEC, 'Bash': BASH_SPEC,
 };
+
+// ── Dart (via shipped WASM + web-tree-sitter) ────────────────────────────────
+//
+// No ABI-compatible native tree-sitter-dart build exists for the pinned host
+// binding, but the grammar ships a portable `.wasm`. We load it through
+// web-tree-sitter (ABI-agnostic, pure JS/WASM, builds on every platform) so
+// Dart graphs everywhere. Dart's grammar places the `function_body` as a
+// SIBLING of `function_signature` (not a child), so a generic query extractor
+// would attribute no calls — hence a custom walk that spans signature+body.
+
+const DART_CLASS_TYPES = new Set(['class_definition', 'mixin_declaration', 'extension_declaration', 'enum_declaration']);
+
+async function extractDartGraph(
+  filePath: string,
+  content: string,
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[] }> {
+  const handle = await loadWasmGrammarSoft('Dart', 'tree-sitter-wasms/out/tree-sitter-dart.wasm');
+  if (!handle) return { nodes: [], rawEdges: [] };
+
+  return handle.withTree(content, (root) => {
+  const enclosingClass = (node: TsNodeLike): string | undefined => {
+    let c = node.parent;
+    while (c) {
+      if (DART_CLASS_TYPES.has(c.type)) return c.childForFieldName('name')?.text;
+      c = c.parent;
+    }
+    return undefined;
+  };
+
+  const nodes: FunctionNode[] = [];
+  const collectFns = (n: TsNodeLike): void => {
+    if (n.type === 'function_signature') {
+      const nameNode = n.childForFieldName('name');
+      if (nameNode) {
+        // Body is a sibling of the signature (or of its method_signature parent).
+        const unit = n.parent && n.parent.type === 'method_signature' ? n.parent : n;
+        const sib = unit.nextNamedSibling;
+        const endIndex = sib && sib.type === 'function_body' ? sib.endIndex : n.endIndex;
+        const className = enclosingClass(n);
+        const id = className ? `${filePath}::${className}.${nameNode.text}` : `${filePath}::${nameNode.text}`;
+        if (!nodes.some(x => x.id === id)) {
+          nodes.push({
+            id, name: nameNode.text, filePath, className, isAsync: false, language: 'Dart',
+            startIndex: n.startIndex, endIndex, fanIn: 0, fanOut: 0,
+            signature: extractDeclaration(content, n.startIndex, n.endIndex, 'Dart'),
+          });
+        }
+      }
+    }
+    for (const c of n.namedChildren) collectFns(c);
+  };
+  collectFns(root);
+
+  const rawEdges: RawEdge[] = [];
+  const seen = new Set<string>();
+  const collectCalls = (n: TsNodeLike): void => {
+    if (n.type === 'selector' && n.namedChildren.some(c => c.type === 'argument_part')) {
+      const prev = n.previousNamedSibling;
+      let name: string | undefined;
+      if (prev?.type === 'identifier') name = prev.text;
+      else if (prev?.type === 'selector') {
+        const uas = prev.namedChildren.find(c => c.type === 'unconditional_assignable_selector');
+        name = uas?.namedChildren.find(c => c.type === 'identifier')?.text;
+      }
+      if (name && !isIgnoredCallee(name)) {
+        const caller = findEnclosingFunction(nodes, n.startIndex);
+        if (caller) {
+          const key = `${caller.id}\0${name}\0${n.startIndex}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            rawEdges.push({ callerId: caller.id, calleeName: name, line: n.startPosition.row + 1 });
+          }
+        }
+      }
+    }
+    for (const c of n.namedChildren) collectCalls(c);
+  };
+  collectCalls(root);
+  return { nodes, rawEdges };
+  });
+}
 
 // ── Elixir (custom walk — everything is a `call` node) ───────────────────────
 const ELIXIR_DEF_KEYWORDS = new Set(['def', 'defp', 'defmacro', 'defmacrop']);
@@ -1755,17 +1938,17 @@ async function extractElixirGraph(
 ): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[] }> {
   const loaded = await loadGrammarSoft('Elixir', () => import('tree-sitter-elixir'), m => m.default);
   if (!loaded) return { nodes: [], rawEdges: [] };
-  const tree = (loaded.parser as Parser).parse(content);
 
+  return loaded.withTree(content, (root) => {
   const nodes: FunctionNode[] = [];
   const calls: Array<{ name: string; object?: string; pos: number; row: number }> = [];
 
-  const targetIdent = (call: Parser.SyntaxNode): Parser.SyntaxNode | undefined => {
+  const targetIdent = (call: TsNodeLike): TsNodeLike | undefined => {
     const t = call.childForFieldName('target');
     return t ?? call.namedChildren[0];
   };
 
-  const walk = (node: Parser.SyntaxNode, moduleName: string | undefined) => {
+  const walk = (node: TsNodeLike, moduleName: string | undefined) => {
     if (node.type === 'call') {
       const target = targetIdent(node);
       const kw = target?.type === 'identifier' ? target.text : undefined;
@@ -1818,7 +2001,7 @@ async function extractElixirGraph(
     }
     for (const child of node.namedChildren) walk(child, moduleName);
   };
-  walk(tree.rootNode, undefined);
+  walk(root, undefined);
 
   const rawEdges: RawEdge[] = [];
   const seen = new Set<string>();
@@ -1832,6 +2015,7 @@ async function extractElixirGraph(
     rawEdges.push({ callerId: caller.id, calleeName: c.name, line: c.row + 1, calleeObject: c.object });
   }
   return { nodes, rawEdges };
+  });
 }
 
 // ============================================================================
@@ -2258,6 +2442,8 @@ export class CallGraphBuilder {
           result = await extractSwiftGraph(file.path, file.content);
         } else if (file.language === 'Elixir') {
           result = await extractElixirGraph(file.path, file.content);
+        } else if (file.language === 'Dart') {
+          result = await extractDartGraph(file.path, file.content);
         } else if (QUERY_LANG_SPECS[file.language]) {
           // spec-08 additional languages (C#, Kotlin, PHP, C, Scala, Dart, Lua, Bash).
           result = await extractByQueries(QUERY_LANG_SPECS[file.language], file.path, file.content);

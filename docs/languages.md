@@ -59,11 +59,15 @@ language <X> grammar unavailable — files will be indexed for search but not gr
 and every other language is unaffected. Files of the unavailable language are
 still walked and indexed for search (BM25).
 
-> Environment note: tree-sitter grammars built against ABI 15 (tree-sitter
-> 0.25+) require a matching host binding. On hosts pinned to an older
-> `tree-sitter` (ABI 14), such grammars degrade as above. Lua and Dart ship only
-> ABI-15 builds today, so they graph wherever an ABI-15-capable host binding is
-> installed and degrade gracefully elsewhere.
+### Native vs WASM grammars
+
+Most languages load a **native** tree-sitter grammar. **Lua** and **Dart** have
+no native build compatible with the pinned host `tree-sitter` binding (they ship
+only ABI-15 builds), so they load a **portable WASM grammar** (`tree-sitter-wasms`)
+through `web-tree-sitter` instead — pure JS/WASM, no native compile, works on
+every platform. The graph output is identical regardless of backend; the choice
+is invisible to every downstream tool. If even the WASM backend is unavailable,
+both still degrade gracefully (detection + search indexing, no graph).
 
 ## Out of scope
 

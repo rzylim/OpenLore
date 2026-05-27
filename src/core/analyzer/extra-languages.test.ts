@@ -78,21 +78,7 @@ describe('spec-08 additional languages', () => {
     expect(g.nodes.some(n => n.name === 'grep' && !n.isExternal)).toBe(false);
   });
 
-  it('Dart — graphed when grammar available, else degrades cleanly', async () => {
-    const g = await buildOne('dart/app.dart', 'Dart');
-    const names = fnNames(g, 'Dart');
-    if (names.length === 0) return; // grammar unavailable in this env → graceful skip
-    expect(names).toContain('run');
-    expect(names).toContain('helper');
-    expect(edge(g, 'run', 'helper')).toBe(true);
-  });
-
-  it('Lua — graphed when grammar available, else degrades cleanly', async () => {
-    const g = await buildOne('lua/app.lua', 'Lua');
-    const names = fnNames(g, 'Lua');
-    if (names.length === 0) return; // grammar unavailable in this env → graceful skip
-    expect(names).toContain('helper');
-    expect(names).toContain('run');
-    expect(edge(g, 'run', 'helper')).toBe(true);
-  });
+  // Dart and Lua (WASM-backed) live in their own test files — vitest's module
+  // sandbox corrupts web-tree-sitter's shared WASM heap when two grammars run in
+  // one file (production node does not; see extra-languages-{dart,lua}.test.ts).
 });

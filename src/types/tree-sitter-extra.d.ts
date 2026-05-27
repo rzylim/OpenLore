@@ -1,9 +1,4 @@
-// Ambient declarations for tree-sitter grammars that ship no types (spec-08).
-declare module 'tree-sitter-dart' {
-  const language: object;
-  export default language;
-}
-declare module 'tree-sitter-lua' {
-  const language: object;
-  export default language;
-}
+// Ambient declarations for spec-08 modules that ship no usable types.
+// Lua and Dart are loaded via portable WASM (tree-sitter-wasms) through
+// web-tree-sitter, which we access through a minimal structural interface.
+declare module 'web-tree-sitter';
