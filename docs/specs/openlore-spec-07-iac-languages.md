@@ -258,9 +258,18 @@ Co-located tests under `src/core/analyzer/iac/*.test.ts` with fixtures under
 (`''`); the spec-05 manifest `languages[]` picks up IaC tags automatically from
 `FunctionNode.language` — both verified, no code change required in either.
 
-### Follow-ups (`TODO(spec-07-followup)`)
+### Follow-ups — all completed (2026-05-27, same PR #92)
 
-- Terraform: refs to resource types without an underscore; structural `*.tf.json` parse.
-- Helm: `.Values.x` → `values.yaml` key resolution.
-- Ansible: dynamic (templated) include targets.
-- Pulumi: Go programs; CDK/CDKTF (out of scope, structurally similar).
+- **Terraform:** references to resource types without an underscore now resolve
+  (emit-candidate + drop-if-unresolved); `*.tf.json` is parsed structurally.
+- **Helm:** `.Values.x` references resolve to the longest matching
+  `values.yaml` key, with value-key nodes + edges.
+- **Ansible:** a templated include target backed by a static `loop`/`with_items`
+  list resolves to each literal item; fully dynamic targets are still dropped
+  (correct per the conservatism contract — never invent an edge).
+- **Pulumi:** Go programs (`github.com/pulumi/pulumi-*`, `pkg.NewService(ctx, "name", …)`)
+  are now detected alongside TS/JS/Python.
+
+**Intentionally deferred (not gaps):** CDK / CDKTF remain out of scope per the
+spec's scope contract; truly dynamic (fully templated) references are dropped by
+design rather than guessed.

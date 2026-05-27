@@ -32,7 +32,7 @@ export function buildIacGraph(files: InFile[]): IacGraph {
     extractCloudFormation(byLang('CloudFormation')),
     extractAnsible(byLang('Ansible')),
     // Pulumi rides on existing general-purpose languages, not an IaC tag.
-    extractPulumi(files.filter((f) => f.language === 'TypeScript' || f.language === 'JavaScript' || f.language === 'Python')),
+    extractPulumi(files.filter((f) => f.language === 'TypeScript' || f.language === 'JavaScript' || f.language === 'Python' || f.language === 'Go')),
   ];
   return mergeIacGraphs(graphs);
 }

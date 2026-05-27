@@ -4,8 +4,9 @@
  * Nodes: plays, named tasks, handlers, roles, role vars/defaults.
  * Edges: notify (task → handler), include_/import_ (tasks/role/playbook → target),
  * play `roles:` (play → role), role meta dependencies (role → role).
- * Jinja2 `{{ }}` in values is tolerated; dynamic includes are dropped.
- * TODO(spec-07-followup): resolve dynamic (templated) include targets.
+ * Jinja2 `{{ }}` in values is tolerated. A templated include target backed by
+ * a static `loop`/`with_items` list resolves to each literal item; fully
+ * dynamic targets (no static list) are dropped rather than guessed.
  */
 
 import { dirname, posix as posixPath } from 'node:path';
@@ -186,6 +187,12 @@ function ingestTaskList(
         if (target && !target.includes('{{')) {
           const resolved = resolveRel(file.path, target);
           refs.push({ fromAddress: from, toAddress: `tasks:${resolved}`, kind: 'references' });
+        } else if (target && target.includes('{{')) {
+          // Templated target backed by a static loop list → resolve each literal.
+          for (const item of staticLoopItems(t)) {
+            const resolved = resolveRel(file.path, item);
+            refs.push({ fromAddress: from, toAddress: `tasks:${resolved}`, kind: 'references' });
+          }
         }
       }
     }
@@ -202,6 +209,13 @@ function ingestTaskList(
       }
     }
   });
+}
+
+/** Literal string items from a task's `loop` / `with_items` (skip templated). */
+function staticLoopItems(t: Record<string, unknown>): string[] {
+  const list = t.loop ?? t.with_items;
+  if (!Array.isArray(list)) return [];
+  return list.filter((x): x is string => typeof x === 'string' && !x.includes('{{'));
 }
 
 function includeTarget(v: unknown): string | null {

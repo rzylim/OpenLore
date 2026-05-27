@@ -15,6 +15,9 @@ describe('ansible extraction', () => {
     load('roles/web/handlers/main.yml'),
     load('roles/db/meta/main.yml'),
     load('tasks/extra.yml'),
+    load('loop-include.yml'),
+    load('tasks/a.yml'),
+    load('tasks/b.yml'),
   ]);
   const addrs = graph.resources.map(r => r.address);
   const refs = graph.references.map(r => `${r.fromAddress} -${r.kind}-> ${r.toAddress}`);
@@ -41,5 +44,10 @@ describe('ansible extraction', () => {
 
   it('links role → role via meta dependencies', () => {
     expect(refs).toContain('role.db -depends_on-> role.web');
+  });
+
+  it('resolves a templated include backed by a static loop list', () => {
+    expect(refs.some(r => r.includes('-references-> tasks:ansible/tasks/a.yml'))).toBe(true);
+    expect(refs.some(r => r.includes('-references-> tasks:ansible/tasks/b.yml'))).toBe(true);
   });
 });

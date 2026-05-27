@@ -35,9 +35,10 @@ Helm, executes Ansible, or calls a cloud API. No external CLI is required.
 
 ### Terraform / HCL  (`*.tf`, `*.tfvars`, `*.tf.json`)
 - **Nodes:** `resource`, `data`, `module`, `variable`, `output`, `locals` (each local), `provider` (external).
-- **Edges:** interpolation and bare references (`type.name.attr`, `var.x`, `local.y`, `module.m.out`, `data.t.n.attr`) and explicit `depends_on`.
+- **Edges:** interpolation and bare references (`type.name.attr`, `var.x`, `local.y`, `module.m.out`, `data.t.n.attr`) and explicit `depends_on`. References to custom resource types without an underscore resolve too — candidates that match no declared resource are dropped, never invented.
 - **Modules:** local `source = "./…"` links the module to the resources declared under that directory; registry/git sources become external module nodes.
-- **Notes:** parsed with a tolerant, hand-rolled HCL scanner (no native dependency). `count`/`for_each` produce a single node for the block (noted in the signature).
+- **JSON variant:** `*.tf.json` is parsed structurally (the same blocks as JSON objects; `${…}` strings carry references).
+- **Notes:** HCL is parsed with a tolerant, hand-rolled scanner (no native dependency). `count`/`for_each` produce a single node for the block (noted in the signature).
 
 ### Kubernetes  (`*.yaml`/`*.yml` manifests; multi-doc supported)
 - **Nodes:** one per document, `address = <kind>/<name>` (namespaced as `<ns>/<kind>/<name>`).
@@ -45,9 +46,8 @@ Helm, executes Ansible, or calls a cloud API. No external CLI is required.
 - **CRDs:** unknown kinds still become nodes (typed by the CRD kind), just with fewer typed edges.
 
 ### Helm  (a directory containing `Chart.yaml`)
-- **Nodes:** the chart (grouping), named templates (`define`), and best-effort template-defined resources (via a tolerant `{{ … }}` masking pre-pass — templates are never executed).
-- **Edges:** chart → subchart dependencies (external unless vendored under `charts/`), and template → named-template (`include`/`template` → `define`).
-- **Follow-up:** `.Values.x` → `values.yaml` key resolution (`TODO(spec-07-followup)`).
+- **Nodes:** the chart (grouping), named templates (`define`), referenced `values.yaml` keys, and best-effort template-defined resources (via a tolerant `{{ … }}` masking pre-pass — templates are never executed).
+- **Edges:** chart → subchart dependencies (external unless vendored under `charts/`), template → named-template (`include`/`template` → `define`), and template → values (`.Values.x` resolved to the longest matching `values.yaml` key).
 
 ### CloudFormation / SAM  (`*.yaml`/`*.yml`/`*.json`)
 - **Nodes:** `Resources.<LogicalId>` (typed by `Type`), `Parameters`, `Outputs`, `Mappings`, `Conditions`.
@@ -57,13 +57,13 @@ Helm, executes Ansible, or calls a cloud API. No external CLI is required.
 ### Ansible  (playbooks, `roles/<name>/{tasks,handlers,defaults,vars,meta}/main.yml`)
 - **Nodes:** plays, named tasks, handlers, roles, role vars/defaults.
 - **Edges:** `notify` (task → handler), `include_tasks`/`import_tasks`/`include_role`/`import_role`/`import_playbook`, `roles:` (play → role), role `meta` dependencies (role → role).
-- **Notes:** Jinja2 `{{ }}` is tolerated; dynamic (templated) includes are dropped.
+- **Notes:** Jinja2 `{{ }}` is tolerated. A templated include target backed by a static `loop`/`with_items` list resolves to each literal item; fully dynamic targets are dropped.
 
-### Pulumi  (TS/JS/Python programs)
-- A **framework detector** over existing source — no new grammar. Recognizes provider SDK resource constructions (`@pulumi/aws`, `/gcp`, `/azure-native`, `/kubernetes`).
+### Pulumi  (TS/JS/Python/Go programs)
+- A **framework detector** over existing source — no new grammar. Recognizes provider SDK resource constructions (`@pulumi/aws`, `/gcp`, `/azure-native`, `/kubernetes`; Go: `github.com/pulumi/pulumi-*`).
 - **Nodes:** each detected resource (`address = <Service>:<name>`, `language = Pulumi`).
 - **Edges:** when one resource's args reference another resource's variable.
-- The normal call graph for those files is unchanged.
+- The normal call graph for those files is unchanged. CDK / CDKTF are out of scope (a future spec).
 
 ## Discovery & disambiguation
 

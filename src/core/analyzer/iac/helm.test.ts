@@ -40,4 +40,12 @@ describe('helm extraction', () => {
   it('does not crash on templated values and extracts the rendered shape', () => {
     expect(addrs.some(a => a.startsWith('mychart:Deployment/'))).toBe(true);
   });
+
+  it('resolves .Values.x references to values.yaml keys', () => {
+    expect(addrs).toContain('mychart:values:replicaCount');
+    expect(addrs).toContain('mychart:values:image.repository');
+    expect(addrs).toContain('mychart:values:image.tag');
+    expect(refs).toContain('mychart:tpl:templates/deployment.yaml -references-> mychart:values:replicaCount');
+    expect(refs).toContain('mychart:tpl:templates/deployment.yaml -references-> mychart:values:image.repository');
+  });
 });

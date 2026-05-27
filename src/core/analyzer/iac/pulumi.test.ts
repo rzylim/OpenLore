@@ -6,6 +6,7 @@ import { extractPulumi } from './pulumi.js';
 const base = join(__dirname, 'fixtures', 'pulumi');
 const ts = { path: 'pulumi/index.ts', content: readFileSync(join(base, 'index.ts'), 'utf-8'), language: 'TypeScript' };
 const py = { path: 'pulumi/__main__.py', content: readFileSync(join(base, '__main__.py'), 'utf-8'), language: 'Python' };
+const go = { path: 'pulumi/main.go', content: readFileSync(join(base, 'main.go'), 'utf-8'), language: 'Go' };
 
 describe('pulumi detection', () => {
   it('detects two resources and a reference edge (TypeScript)', () => {
@@ -23,6 +24,14 @@ describe('pulumi detection', () => {
     expect(addrs).toEqual(['Bucket:data', 'BucketPolicy:data-policy']);
     const refs = graph.references.map(r => `${r.fromAddress} -> ${r.toAddress}`);
     expect(refs).toContain('BucketPolicy:data-policy -> Bucket:data');
+  });
+
+  it('detects two resources and a reference edge (Go)', () => {
+    const graph = extractPulumi([go]);
+    const addrs = graph.resources.map(r => r.address).sort();
+    expect(addrs).toEqual(['Bucket:logs', 'BucketPolicy:logs-policy']);
+    const refs = graph.references.map(r => `${r.fromAddress} -> ${r.toAddress}`);
+    expect(refs).toContain('BucketPolicy:logs-policy -> Bucket:logs');
   });
 
   it('ignores files without a Pulumi provider import', () => {

@@ -8,7 +8,7 @@
  *
  * Scope conservatively: only the common provider SDKs (@pulumi/aws, /gcp,
  * /azure-native, /kubernetes). Unknown SDKs → no resource nodes.
- * TODO(spec-07-followup): Go Pulumi programs; CDK / CDKTF (out of scope).
+ * CDK / CDKTF are intentionally out of scope (deferred to a future spec).
  */
 
 import type { IacGraph, IacResource } from './types.js';
@@ -18,6 +18,7 @@ interface InFile { path: string; content: string; language: string }
 
 const PROVIDER_PKGS = ['@pulumi/aws', '@pulumi/gcp', '@pulumi/azure', '@pulumi/azure-native', '@pulumi/kubernetes', '@pulumi/pulumi'];
 const PY_PROVIDER_MODS = ['pulumi_aws', 'pulumi_gcp', 'pulumi_azure', 'pulumi_azure_native', 'pulumi_kubernetes', 'pulumi'];
+const GO_PROVIDER_PATHS = ['pulumi-aws', 'pulumi-gcp', 'pulumi-azure', 'pulumi-azure-native', 'pulumi-kubernetes', 'pulumi/pulumi/sdk'];
 
 interface Construction {
   address: string;
@@ -35,14 +36,49 @@ export function extractPulumi(files: InFile[]): IacGraph {
       ingest(file, detectTsProviderNames(file.content), true, graph);
     } else if (file.language === 'Python') {
       ingest(file, detectPyProviderNames(file.content), false, graph);
+    } else if (file.language === 'Go') {
+      ingestGo(file, detectGoProviderNames(file.content), graph);
     }
   }
   return graph;
 }
 
+/** Go: `bucket, _ := s3.NewBucket(ctx, "logs", &s3.BucketArgs{…})`. */
+function ingestGo(file: InFile, providerNames: Set<string>, graph: IacGraph): void {
+  if (providerNames.size === 0) return;
+  const re = /(?:(\w+)\s*(?:,\s*\w+\s*)?:?=\s*)?([A-Za-z_]\w*)\.New([A-Z]\w*)\(\s*[\w.]+\s*,\s*"([^"]+)"/g;
+  const constructions: Construction[] = [];
+  for (const m of file.content.matchAll(re)) {
+    const [, varName, pkg, service, name] = m;
+    if (!providerNames.has(pkg)) continue;
+    const callParen = (m.index ?? 0) + m[0].indexOf('(');
+    constructions.push({
+      address: `${service}:${name}`, service, name,
+      line: lineOf(file.content, m.index ?? 0), varName, argsText: sliceArgs(file.content, callParen),
+    });
+  }
+  emitConstructions(constructions, file, graph);
+}
+
+/** Go provider package local names (alias or last import-path segment). */
+function detectGoProviderNames(content: string): Set<string> {
+  const names = new Set<string>();
+  for (const m of content.matchAll(/(?:(\w+)\s+)?"(github\.com\/pulumi\/[^"]+)"/g)) {
+    const alias = m[1];
+    const path = m[2];
+    if (!GO_PROVIDER_PATHS.some((p) => path.includes(p))) continue;
+    names.add(alias ?? path.split('/').pop()!);
+  }
+  return names;
+}
+
 function ingest(file: InFile, providerNames: Set<string>, isTs: boolean, graph: IacGraph): void {
   if (providerNames.size === 0) return;
-  const constructions = findConstructions(file.content, providerNames, isTs);
+  emitConstructions(findConstructions(file.content, providerNames, isTs), file, graph);
+}
+
+/** Emit resource nodes + variable-reference edges for detected constructions. */
+function emitConstructions(constructions: Construction[], file: InFile, graph: IacGraph): void {
   const byVar = new Map<string, string>();
   for (const c of constructions) {
     if (c.varName) byVar.set(c.varName, c.address);

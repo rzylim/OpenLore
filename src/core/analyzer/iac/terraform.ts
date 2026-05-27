@@ -39,6 +39,10 @@ export function extractTerraform(
   const moduleSources: Array<{ mod: IacModule; sourceDir: string | null }> = [];
 
   for (const file of files) {
+    if (file.path.toLowerCase().endsWith('.tf.json')) {
+      ingestTfJson(file, graph, dirResources, moduleSources);
+      continue;
+    }
     const blocks = scanHclBlocks(file.content);
     for (const block of blocks) {
       ingestBlock(block, file.path, graph, dirResources, moduleSources);
@@ -228,9 +232,10 @@ function classifyRef(token: string): string | null {
   if (root === 'local') return `local.${segs[1]}`;
   if (root === 'module') return `module.${segs[1]}`;
   if (root === 'data') return segs.length >= 3 ? `data.${segs[1]}.${segs[2]}` : null;
-  // Resource reference: <type>.<name>.<attr…>; provider resource types use snake_case.
-  if (root.includes('_')) return `${root}.${segs[1]}`;
-  return null; // TODO(spec-07-followup): resolve refs to types without underscores
+  // Resource reference: <type>.<name>.<attr…>. We emit the candidate even when the
+  // type has no underscore (e.g. a custom provider type); the projector drops it
+  // if no declared resource owns the address, so this never invents a wrong edge.
+  return `${root}.${segs[1]}`;
 }
 
 /** Extract candidate dotted tokens from a body, ignoring quoted-string noise. */
@@ -246,6 +251,122 @@ function scanRefTokens(body: string): string[] {
     tokens.push(t[0]);
   }
   return tokens;
+}
+
+/**
+ * Structural parse of the Terraform JSON variant (`*.tf.json`). The same
+ * top-level blocks appear as JSON objects; references live in `${…}` strings.
+ */
+function ingestTfJson(
+  file: { path: string; content: string },
+  graph: IacGraph,
+  dirResources: Map<string, IacResource[]>,
+  moduleSources: Array<{ mod: IacModule; sourceDir: string | null }>,
+): void {
+  let root: Record<string, unknown>;
+  try {
+    root = JSON.parse(file.content) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  if (!root || typeof root !== 'object') return;
+
+  const dir = posixPath.normalize(dirname(file.path));
+  const push = (r: IacResource) => {
+    graph.resources.push(r);
+    if (!dirResources.has(dir)) dirResources.set(dir, []);
+    dirResources.get(dir)!.push(r);
+  };
+  const lineOf = (needle: string): number => {
+    const idx = file.content.indexOf(`"${needle}"`);
+    if (idx < 0) return 1;
+    return file.content.slice(0, idx).split('\n').length;
+  };
+  // A block value may be a single object or an array of objects (TF JSON allows both).
+  const each = (v: unknown): Array<Record<string, unknown>> =>
+    Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      : v && typeof v === 'object' ? [v as Record<string, unknown>] : [];
+
+  const addRefsFrom = (fromAddress: string, body: unknown) => {
+    const seen = new Set<string>();
+    const json = JSON.stringify(body ?? {});
+    for (const m of json.matchAll(/\$\{([^}]*)\}/g)) {
+      for (const t of m[1].matchAll(/[a-zA-Z_][\w-]*(?:\.[a-zA-Z_][\w-]*)+/g)) {
+        const ref = classifyRef(t[0]);
+        if (ref && ref !== fromAddress && !seen.has(`r:${ref}`)) {
+          seen.add(`r:${ref}`);
+          graph.references.push({ fromAddress, toAddress: ref, kind: 'references' });
+        }
+      }
+    }
+    const dep = (body as Record<string, unknown>)?.depends_on;
+    if (Array.isArray(dep)) {
+      for (const d of dep) {
+        const ref = typeof d === 'string' ? classifyRef(d) : null;
+        if (ref && ref !== fromAddress && !seen.has(`d:${ref}`)) {
+          seen.add(`d:${ref}`);
+          graph.references.push({ fromAddress, toAddress: ref, kind: 'depends_on' });
+        }
+      }
+    }
+  };
+
+  const resBlock = root.resource as Record<string, unknown> | undefined;
+  for (const [type, named] of Object.entries(resBlock ?? {})) {
+    for (const obj of each(named)) {
+      for (const [name, body] of Object.entries(obj)) {
+        const address = `${type}.${name}`;
+        push({ address, type, kind: 'resource', filePath: file.path, startLine: lineOf(name), signature: `resource "${type}" "${name}"`, language: 'Terraform' });
+        addRefsFrom(address, body);
+      }
+    }
+  }
+  const dataBlock = root.data as Record<string, unknown> | undefined;
+  for (const [type, named] of Object.entries(dataBlock ?? {})) {
+    for (const obj of each(named)) {
+      for (const [name, body] of Object.entries(obj)) {
+        const address = `data.${type}.${name}`;
+        push({ address, type, kind: 'data', filePath: file.path, startLine: lineOf(name), signature: `data "${type}" "${name}"`, language: 'Terraform' });
+        addRefsFrom(address, body);
+      }
+    }
+  }
+  for (const obj of each(root.variable)) {
+    for (const name of Object.keys(obj)) {
+      push({ address: `var.${name}`, type: 'variable', kind: 'variable', filePath: file.path, startLine: lineOf(name), signature: `variable "${name}"`, language: 'Terraform' });
+    }
+  }
+  for (const obj of each(root.output)) {
+    for (const [name, body] of Object.entries(obj)) {
+      const address = `output.${name}`;
+      push({ address, type: 'output', kind: 'output', filePath: file.path, startLine: lineOf(name), signature: `output "${name}"`, language: 'Terraform' });
+      addRefsFrom(address, body);
+    }
+  }
+  for (const obj of each(root.provider)) {
+    for (const name of Object.keys(obj)) {
+      graph.resources.push({ address: `provider.${name}`, type: 'provider', kind: 'provider', filePath: file.path, startLine: lineOf(name), isExternal: true, signature: `provider "${name}"`, language: 'Terraform' });
+    }
+  }
+  for (const obj of each(root.locals)) {
+    for (const key of Object.keys(obj)) {
+      push({ address: `local.${key}`, type: 'local', kind: 'value', filePath: file.path, startLine: lineOf(key), signature: `local.${key}`, language: 'Terraform' });
+    }
+  }
+  for (const obj of each(root.module)) {
+    for (const [name, body] of Object.entries(obj)) {
+      const address = `module.${name}`;
+      const source = (body as Record<string, unknown>)?.source;
+      const isLocal = typeof source === 'string' && (source.startsWith('./') || source.startsWith('../'));
+      const isExternal = typeof source === 'string' && !isLocal;
+      push({ address, type: 'module', kind: 'module', filePath: file.path, startLine: lineOf(name), isExternal: isExternal || undefined, signature: `module "${name}"`, language: 'Terraform' });
+      const mod: IacModule = { address, type: 'module', filePath: file.path, language: 'Terraform', isExternal: isExternal || undefined, members: [] };
+      graph.modules.push(mod);
+      const sourceDir = isLocal && typeof source === 'string' ? posixPath.normalize(posixPath.join(dir, source)) : null;
+      moduleSources.push({ mod, sourceDir });
+      addRefsFrom(address, body);
+    }
+  }
 }
 
 /** Blank out double-quoted string literals (keeping length) to avoid false refs. */

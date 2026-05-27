@@ -7,9 +7,8 @@
  * masks `{{ … }}` (never executing it) so the structure parses best-effort.
  *
  * Edges: chart → subchart dependency (external unless vendored under charts/),
- * and template → named-template (`include`/`template` → `define`) references.
- * Template → .Values references are a spec-07 follow-up.
- * TODO(spec-07-followup): resolve `.Values.x` references to values.yaml keys.
+ * template → named-template (`include`/`template` → `define`), and template →
+ * values (`.Values.x` resolved to the longest matching values.yaml key).
  */
 
 import { dirname, posix as posixPath } from 'node:path';
@@ -89,6 +88,37 @@ function extractChart(root: string, chartFiles: InFile[], allChartRoots: string[
     module.members.push(depAddr);
   }
 
+  // values.yaml → flattened dot-path set (for .Values.x resolution below).
+  const valuesFile = chartFiles.find((f) => /(^|\/)values\.ya?ml$/.test(f.path.replace(/\\/g, '/')));
+  const valuePaths = new Set<string>();
+  if (valuesFile) {
+    try {
+      const v = (parseAllDocuments(valuesFile.content)[0]?.toJS() ?? {}) as Record<string, unknown>;
+      flattenKeys(v, '', valuePaths);
+    } catch { /* tolerate malformed values */ }
+  }
+  const valuesFilePath = valuesFile?.path ?? chartYaml.path;
+  const ensureValueNode = (path: string): string => {
+    const addr = `${chartName}:values:${path}`;
+    if (!graph.resources.some((r) => r.address === addr)) {
+      graph.resources.push({
+        address: addr, type: 'value', kind: 'value', filePath: valuesFilePath,
+        startLine: 1, signature: `.Values.${path}`, language: 'Helm',
+      });
+      module.members.push(addr);
+    }
+    return addr;
+  };
+  /** Resolve a referenced `.Values` path to the longest declared prefix, or null. */
+  const resolveValuePath = (path: string): string | null => {
+    const parts = path.split('.');
+    for (let i = parts.length; i > 0; i--) {
+      const prefix = parts.slice(0, i).join('.');
+      if (valuePaths.has(prefix)) return prefix;
+    }
+    return null;
+  };
+
   // Named templates (define) and includes across templates/_helpers.
   for (const f of chartFiles) {
     const rel = posixPath.relative(root, posixPath.normalize(f.path.replace(/\\/g, '/')));
@@ -122,6 +152,16 @@ function extractChart(root: string, chartFiles: InFile[], allChartRoots: string[
       if (seen.has(defAddr)) continue;
       seen.add(defAddr);
       graph.references.push({ fromAddress: anchorAddr, toAddress: defAddr, kind: 'references' });
+    }
+
+    // .Values.x references → values.yaml key nodes (longest declared prefix).
+    const seenValues = new Set<string>();
+    for (const m of f.content.matchAll(/\.Values\.([A-Za-z_][\w.]*)/g)) {
+      const resolved = resolveValuePath(m[1].replace(/\.$/, ''));
+      if (!resolved || seenValues.has(resolved)) continue;
+      seenValues.add(resolved);
+      const valAddr = ensureValueNode(resolved);
+      graph.references.push({ fromAddress: anchorAddr, toAddress: valAddr, kind: 'references' });
     }
 
     // Best-effort manifest extraction (tolerant masked parse).
@@ -169,6 +209,16 @@ function maskHelm(content: string): string {
       return line.replace(/\{\{-?[\s\S]*?-?\}\}/g, 'helmval');
     })
     .join('\n');
+}
+
+/** Flatten a values object into dot-path keys (every node and leaf). */
+function flattenKeys(obj: unknown, prefix: string, out: Set<string>): void {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    out.add(path);
+    flattenKeys(v, path, out);
+  }
 }
 
 function lineOfIndex(content: string, index: number): number {

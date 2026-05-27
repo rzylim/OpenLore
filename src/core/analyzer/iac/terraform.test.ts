@@ -46,6 +46,34 @@ describe('terraform extraction', () => {
     expect(refs).toContain('module.network -depends_on-> aws_subnet.public');
   });
 
+  it('parses the *.tf.json variant (resources, refs, depends_on)', () => {
+    const json = extractTerraform([load('resources.tf.json')]);
+    const addrs = json.resources.map(r => r.address).sort();
+    expect(addrs).toContain('aws_sqs_queue.jobs');
+    expect(addrs).toContain('aws_sns_topic.alerts');
+    expect(addrs).toContain('aws_sns_topic_subscription.jobs_sub');
+    expect(addrs).toContain('var.queue_name');
+    expect(addrs).toContain('output.queue_arn');
+    const refs = json.references.map(r => `${r.fromAddress} -${r.kind}-> ${r.toAddress}`);
+    expect(refs).toContain('aws_sqs_queue.jobs -references-> var.queue_name');
+    expect(refs).toContain('aws_sns_topic_subscription.jobs_sub -references-> aws_sns_topic.alerts');
+    expect(refs).toContain('aws_sns_topic_subscription.jobs_sub -references-> aws_sqs_queue.jobs');
+    expect(refs).toContain('aws_sns_topic_subscription.jobs_sub -depends_on-> aws_sqs_queue.jobs');
+    expect(refs).toContain('output.queue_arn -references-> aws_sqs_queue.jobs');
+  });
+
+  it('resolves references to resource types without an underscore (drops if unknown)', () => {
+    const g = extractTerraform([{
+      path: 'terraform/custom.tf',
+      content: 'resource "kubernetes" "ns" {}\nresource "foo" "bar" {\n  ref = kubernetes.ns.id\n  dangling = nope.gone.x\n}\n',
+    }]);
+    const refs = g.references.map(r => `${r.fromAddress} -> ${r.toAddress}`);
+    expect(refs).toContain('foo.bar -> kubernetes.ns');
+    // Unresolved target (no such resource) is still emitted as a candidate but
+    // would be dropped by the projector; assert it is not falsely a known node.
+    expect(g.resources.some(r => r.address === 'nope.gone')).toBe(false);
+  });
+
   it('projects onto FunctionNode/CallEdge with blast-radius direction', () => {
     const projected = projectIacGraph(graph);
     // analyze_impact on a base resource: who depends on aws_s3_bucket.logs?
