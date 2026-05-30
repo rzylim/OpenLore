@@ -1,7 +1,14 @@
-# OpenLore Spec 13 — The Context Substrate (True North)
+# OpenLore Spec 13 — Product Direction: A Deterministic Structural Context Substrate for AI Coding Agents
 
 > This is a **strategy + architecture** spec, not a single-PR prompt. It defines the
 > direction every subsequent spec should serve.
+>
+> **Prime directive (read first):** OpenLore is, and remains, a tool for **AI coding agents**.
+> Everything in this document is **additive**. Nothing here removes, replaces, or repositions
+> the current product. We grow *up* (deeper, better-proven code intelligence) and *out*
+> (adjacent developer context — infra, decisions, provenance), never *away* from the coding
+> agent. Every new capability must make the existing coding-agent use case more useful, or it
+> does not ship. See "Compatibility & scope guarantee" below.
 >
 > **Revision note (2026-05-30):** the first draft of this spec overstated several things
 > (a built "code↔org join," "bidirectional SCIP," a published token-savings benchmark, a
@@ -19,12 +26,12 @@ Branch: `openlore-spec-13-context-substrate`. Direction locked; claims verified;
 - [x] Competitive + market reality verified against primary sources (2026-05-30)
 - [x] Repo ground-truth established (what actually ships vs. what was claimed)
 - [x] Theses adversarially stress-tested; positioning corrected to survive the strongest attack
-- [ ] `TODO(spec-14)`: **WITH-vs-WITHOUT token-savings benchmark** — the bleeding wound; do this FIRST
-- [ ] `TODO(spec-15)`: Dogfood the decision/drift governance in OpenLore's own repo
-- [ ] `TODO(spec-16)`: Promote `Decision` to a first-class graph node with `affects` edges
-- [ ] `TODO(spec-17)`: Cross-domain impact query (code → infra) as a headline `orient` capability
-- [ ] `TODO(spec-18)`: Local org-artifact join (git/PR metadata via local `gh`) — no OAuth
-- [ ] `TODO(horizon-3, optional, may never ship)`: cloud OAuth connectors as a fire-walled plugin
+- [ ] **Spec 14** — Agent Token-Efficiency Benchmark Harness (WITH vs WITHOUT). *Do this first.* → [openlore-spec-14-agent-benchmark-harness.md](openlore-spec-14-agent-benchmark-harness.md)
+- [ ] **Spec 15** — Decision & Drift Governance Dogfooding (turn the gate on in our own repo). → [openlore-spec-15-governance-dogfooding.md](openlore-spec-15-governance-dogfooding.md)
+- [ ] **Spec 16** — Architectural Decisions as First-Class Graph Nodes (`affects` edges). → [openlore-spec-16-decisions-as-graph-nodes.md](openlore-spec-16-decisions-as-graph-nodes.md)
+- [ ] **Spec 17** — Cross-Domain Impact Analysis (Code ↔ Infrastructure). → [openlore-spec-17-cross-domain-impact.md](openlore-spec-17-cross-domain-impact.md)
+- [ ] **Spec 18** — Local Provenance Edges (Git & PR metadata, no OAuth). → [openlore-spec-18-local-provenance-edges.md](openlore-spec-18-local-provenance-edges.md)
+- [ ] **Horizon 3 (optional, may never ship)** — cloud OAuth connectors as a fire-walled plugin. Deliberately *not* a numbered spec until 14–18 land and prove the local-first thesis.
 
 ---
 
@@ -44,6 +51,52 @@ tree-sitter / SCIP / LSP), not the Glean-style breadth product. That single choi
 
 The rest of this spec is about getting the *positioning* right, because the lens alone does
 not survive contact with the 2026 market without a sharper claim.
+
+---
+
+## Compatibility & scope guarantee (the prime constraint)
+
+OpenLore's installed product is: `openlore analyze` → `CODEBASE.md` + `orient()` over MCP for
+coding agents, with optional specs/decisions/drift. **That contract is frozen. This direction
+adds to it; it does not change or break it.** Concretely:
+
+- **The CLI surface is preserved.** `analyze`, `generate`, `drift`, `decisions`, `export scip`,
+  `manifest`, `install`, `mcp` continue to behave as today. New work adds new subcommands/flags,
+  never repurposes existing ones.
+- **`orient()`'s response shape is treated as a public API.** New fields are additive and
+  optional; existing fields keep their meaning. A 2.x agent integration must not break.
+- **No API key remains required for the core.** Layer-1 determinism (graph, `orient`,
+  `CODEBASE.md`) stays offline and key-free. Everything network/LLM stays optional, as today.
+- **Graph schema changes are safe by construction.** The edge store is keyed on `SCHEMA_VERSION`
+  and rebuilds from source on a version bump ([edge-store.ts](../../src/core/services/edge-store.ts)).
+  The graph is *derived*, never hand-authored, so a schema addition costs users one re-analyze —
+  not a migration, not data loss.
+- **Every new capability serves the coding agent.** Code↔infra impact, decision/provenance edges,
+  and the benchmark are all things a coding agent uses *while working on code*. The one item that
+  drifts toward non-coding context — cloud org connectors — is fenced to an optional Horizon-3
+  plugin that is never installed by default and never on the core path.
+
+**The test for any future PR under this spec:** *does it make today's coding-agent workflow
+strictly better or strictly broader, while leaving every current behavior intact?* If not, it
+does not belong here.
+
+## How the shape of the product changes
+
+This is growth along the axis OpenLore already chose, not a turn onto a new one:
+
+| | Today | After specs 14–18 (still local, still key-free, still coding-first) |
+|---|---|---|
+| **Core artifact** | Deterministic code call graph | Same graph, now spanning code **+ infrastructure + decisions** on one primitive |
+| **What `orient()` answers** | who-calls / what-breaks / call-path / insertion points / spec matches | + code→infra blast radius; + "who last changed this, under which PR/decision" |
+| **Decisions** | LLM-extracted, stored in a side-file, surfaced by a string filter | First-class graph nodes with `affects` edges, traversable by `analyze_impact` |
+| **Evidence** | "saves 15–50k tokens" (unmeasured claim) | A reproducible WITH-vs-WITHOUT benchmark, published |
+| **Audience** | Coding agents | **Unchanged** — coding agents |
+| **Network** | Optional (specs/LLM only) | **Unchanged** — core stays offline; cloud is opt-in Horizon-3 only |
+
+The product goes from *"a map of your code"* to *"the always-fresh structural and governance
+memory of your code, the infra it deploys to, and the decisions that shaped it"* — a wider view
+of **the same developer's world**, for **the same audience**, with **the same local-first,
+deterministic guarantees**. That is "grow up and out," not pivot.
 
 ---
 
