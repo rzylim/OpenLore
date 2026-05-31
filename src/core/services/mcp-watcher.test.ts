@@ -1,5 +1,12 @@
 /**
- * Tests for McpWatcher — handleChange (unit, no real FS watcher needed)
+ * Tests for McpWatcher — handleChange / handleBatch (unit, no real FS watcher).
+ *
+ * Spec 13.1 reshaped the watcher: a single coalescing queue (enqueue → flush →
+ * handleBatch) replaces the per-file timer map, and the vector update goes
+ * through VectorIndex.updateFiles (row-level) on a decoupled lane rather than
+ * reEmbed → VectorIndex.build. These tests track the new surface; the
+ * freshness/coalescing guarantees themselves live in
+ * mcp-watcher-incremental.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -10,6 +17,7 @@ import type { LLMContext } from '../analyzer/artifact-generator.js';
 import type { SerializedCallGraph } from '../analyzer/call-graph.js';
 import { EdgeStore } from './edge-store.js';
 import type { CallEdge } from '../analyzer/call-graph.js';
+import { _resetContextCacheForTesting } from './mcp-handlers/utils.js';
 
 // ── chokidar mock (prevents real FS watcher from opening) ────────────────────
 
@@ -61,6 +69,10 @@ async function setupProject(ctx: LLMContext): Promise<{ rootPath: string; output
   return { rootPath, outputPath, contextPath };
 }
 
+beforeEach(() => {
+  _resetContextCacheForTesting();
+});
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('McpWatcher.handleChange', () => {
@@ -72,6 +84,7 @@ describe('McpWatcher.handleChange', () => {
 
   afterEach(() => {
     stderrSpy.mockRestore();
+    _resetContextCacheForTesting();
   });
 
   it('updates signatures for a changed TypeScript file', async () => {
@@ -304,15 +317,16 @@ describe('McpWatcher.handleChange', () => {
     const watcher = new McpWatcher({ rootPath, outputPath });
     await watcher.handleChange(srcFile);
 
-    // llm-context.json must not be written (early return on hash hit)
+    // llm-context.json must not be written: the only changed file was a no-op
+    // autosave (hash hit), so the batch has nothing to persist.
     const after = await readFile(contextPath, 'utf-8');
     expect(after).toBe(before);
   });
 });
 
-// ── reEmbed paths ─────────────────────────────────────────────────────────────
+// ── Vector update path (updateVectors → VectorIndex.updateFiles) ────────────────
 
-describe('McpWatcher.reEmbed', () => {
+describe('McpWatcher vector update (Spec 13.1 — row-level updateFiles)', () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -322,20 +336,21 @@ describe('McpWatcher.reEmbed', () => {
   afterEach(() => {
     stderrSpy.mockRestore();
     vi.restoreAllMocks();
+    vi.resetModules();
+    _resetContextCacheForTesting();
   });
 
-  it('refreshes the BM25 index (embedSvc=null) when no embedding service is available', async () => {
+  it('calls VectorIndex.updateFiles with a null embedder when no embedding service is available (BM25 refresh)', async () => {
     const cg = makeCallGraph();
     const ctx = makeContext({ callGraph: cg });
     const { rootPath, outputPath } = await setupProject(ctx);
 
-    // Write a fake vector index marker so VectorIndex.exists returns true
     await mkdir(join(outputPath, 'vector-index'), { recursive: true });
     await writeFile(join(outputPath, 'vector-index', '.keep'), '', 'utf-8');
 
-    const mockBuild = vi.fn().mockResolvedValue({ embedded: 0, reused: 0, total: 1, hasEmbeddings: false });
+    const mockUpdate = vi.fn().mockResolvedValue({ embedded: 0, reused: 0, total: 1, hasEmbeddings: false });
     vi.doMock('../analyzer/vector-index.js', () => ({
-      VectorIndex: { exists: vi.fn().mockReturnValue(true), build: mockBuild },
+      VectorIndex: { exists: vi.fn().mockReturnValue(true), updateFiles: mockUpdate },
     }));
     vi.doMock('../analyzer/embedding-service.js', () => ({
       EmbeddingService: {
@@ -354,32 +369,31 @@ describe('McpWatcher.reEmbed', () => {
     const watcher = new McpWatcher({ rootPath, outputPath });
     await watcher.handleChange(srcFile);
 
-    // build is invoked with a null embedder (BM25 refresh), not skipped
-    expect(mockBuild).toHaveBeenCalledWith(
+    expect(mockUpdate).toHaveBeenCalledWith(
       outputPath,
-      cg.nodes,
-      expect.any(Array),
-      expect.any(Set),
-      expect.any(Set),
-      null,
-      expect.any(Map),
-      true,
-    );
-    expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining('refreshed BM25 index'),
+      expect.any(Array),   // changed nodes (empty here — no edge store)
+      expect.any(Set),     // changed file paths
+      expect.any(Array),   // signatures
+      expect.any(Set),     // hub ids
+      expect.any(Set),     // entry ids
+      null,                // embedder unavailable → BM25 refresh
+      expect.any(Map),     // file contents
     );
   });
 
-  it('calls VectorIndex.build and logs when embedding succeeds', async () => {
+  it('calls VectorIndex.updateFiles with the embedder when one is available', async () => {
     const cg = makeCallGraph();
     const ctx = makeContext({ callGraph: cg });
     const { rootPath, outputPath } = await setupProject(ctx);
 
-    const mockBuild = vi.fn().mockResolvedValue({ embedded: 3, reused: 1, total: 4, hasEmbeddings: true });
+    await mkdir(join(outputPath, 'vector-index'), { recursive: true });
+    await writeFile(join(outputPath, 'vector-index', '.keep'), '', 'utf-8');
+
+    const mockUpdate = vi.fn().mockResolvedValue({ embedded: 3, reused: 1, total: 4, hasEmbeddings: true });
     const mockEmbedSvc = {};
 
     vi.doMock('../analyzer/vector-index.js', () => ({
-      VectorIndex: { exists: vi.fn().mockReturnValue(true), build: mockBuild },
+      VectorIndex: { exists: vi.fn().mockReturnValue(true), updateFiles: mockUpdate },
     }));
     vi.doMock('../analyzer/embedding-service.js', () => ({
       EmbeddingService: {
@@ -398,30 +412,30 @@ describe('McpWatcher.reEmbed', () => {
     const watcher = new McpWatcher({ rootPath, outputPath });
     await watcher.handleChange(srcFile);
 
-    expect(mockBuild).toHaveBeenCalledWith(
+    expect(mockUpdate).toHaveBeenCalledWith(
       outputPath,
-      cg.nodes,
+      expect.any(Array),
+      expect.any(Set),
       expect.any(Array),
       expect.any(Set),
       expect.any(Set),
       mockEmbedSvc,
       expect.any(Map),
-      true,
-    );
-    expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining('re-embedded'),
     );
   });
 
-  it('logs embed error and does not throw when VectorIndex.build throws', async () => {
+  it('logs an embed error and does not throw when VectorIndex.updateFiles throws', async () => {
     const cg = makeCallGraph();
     const ctx = makeContext({ callGraph: cg });
     const { rootPath, outputPath } = await setupProject(ctx);
 
+    await mkdir(join(outputPath, 'vector-index'), { recursive: true });
+    await writeFile(join(outputPath, 'vector-index', '.keep'), '', 'utf-8');
+
     vi.doMock('../analyzer/vector-index.js', () => ({
       VectorIndex: {
         exists: vi.fn().mockReturnValue(true),
-        build: vi.fn().mockRejectedValue(new Error('LanceDB connection failed')),
+        updateFiles: vi.fn().mockRejectedValue(new Error('LanceDB connection failed')),
       },
     }));
     vi.doMock('../analyzer/embedding-service.js', () => ({
@@ -446,9 +460,9 @@ describe('McpWatcher.reEmbed', () => {
   });
 });
 
-// ── Debounce ──────────────────────────────────────────────────────────────────
+// ── Coalescing queue (Spec 13.1) ───────────────────────────────────────────────
 
-describe('McpWatcher debounce', () => {
+describe('McpWatcher coalescing queue', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -457,79 +471,62 @@ describe('McpWatcher debounce', () => {
     vi.useRealTimers();
   });
 
-  it('coalesces rapid changes to the same file into one handleChange call', async () => {
+  it('coalesces rapid changes to the same file into a single batch flush', async () => {
     const { McpWatcher } = await import('./mcp-watcher.js');
-    const watcher = new McpWatcher({ rootPath: '/tmp/proj', debounceMs: 200 });
-    const spy = vi.spyOn(watcher, 'handleChange').mockResolvedValue(undefined);
+    const watcher = new McpWatcher({ rootPath: '/tmp/proj', debounceMs: 200, embed: false });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(watcher as any, 'handleBatch').mockResolvedValue(undefined);
+    const enqueue = (watcher as unknown as { enqueue(p: string): void }).enqueue.bind(watcher);
 
-    // Simulate 5 rapid saves
-    for (let i = 0; i < 5; i++) {
-      (watcher as unknown as { scheduleChange(p: string): void }).scheduleChange('/tmp/proj/src/foo.ts');
-    }
+    for (let i = 0; i < 5; i++) enqueue('/tmp/proj/src/foo.ts');
 
     await vi.runAllTimersAsync();
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('fires separate handleChange for two different files', async () => {
+  it('coalesces changes across DIFFERENT files into ONE batch (G2)', async () => {
     const { McpWatcher } = await import('./mcp-watcher.js');
-    const watcher = new McpWatcher({ rootPath: '/tmp/proj', debounceMs: 200 });
-    const spy = vi.spyOn(watcher, 'handleChange').mockResolvedValue(undefined);
+    const watcher = new McpWatcher({ rootPath: '/tmp/proj', debounceMs: 200, embed: false });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(watcher as any, 'handleBatch').mockResolvedValue(undefined);
+    const enqueue = (watcher as unknown as { enqueue(p: string): void }).enqueue.bind(watcher);
 
-    (watcher as unknown as { scheduleChange(p: string): void }).scheduleChange('/tmp/proj/src/a.ts');
-    (watcher as unknown as { scheduleChange(p: string): void }).scheduleChange('/tmp/proj/src/b.ts');
+    enqueue('/tmp/proj/src/a.ts');
+    enqueue('/tmp/proj/src/b.ts');
 
     await vi.runAllTimersAsync();
-    expect(spy).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('McpWatcher reschedule-when-busy', () => {
-  let stderrSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    vi.useFakeTimers();
+    // One flush carrying both paths — not one flush per file.
+    expect(spy).toHaveBeenCalledTimes(1);
+    const batch = spy.mock.calls[0][0] as string[];
+    expect(new Set(batch)).toEqual(new Set(['/tmp/proj/src/a.ts', '/tmp/proj/src/b.ts']));
   });
 
-  afterEach(() => {
-    stderrSpy.mockRestore();
-    vi.useRealTimers();
-  });
-
-  it('reschedules a change instead of dropping it when busy', async () => {
+  it('processes changes that arrive while a flush is in flight (no drop, single-flight)', async () => {
     const { McpWatcher } = await import('./mcp-watcher.js');
-    const watcher = new McpWatcher({ rootPath: '/tmp/proj', debounceMs: 100 });
+    const watcher = new McpWatcher({ rootPath: '/tmp/proj', debounceMs: 100, embed: false });
 
-    // Make handleChange block until we resolve it
     let resolveFirst!: () => void;
     const firstCall = new Promise<void>(r => { resolveFirst = r; });
-    let callCount = 0;
-    vi.spyOn(watcher, 'handleChange').mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) await firstCall;
+    let calls = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(watcher as any, 'handleBatch').mockImplementation(async () => {
+      calls++;
+      if (calls === 1) await firstCall;
     });
+    const enqueue = (watcher as unknown as { enqueue(p: string): void }).enqueue.bind(watcher);
 
-    const schedule = (watcher as unknown as { scheduleChange(p: string): void }).scheduleChange.bind(watcher);
-
-    // First change — will start processing after debounce
-    schedule('/tmp/proj/src/a.ts');
+    enqueue('/tmp/proj/src/a.ts');
     await vi.advanceTimersByTimeAsync(100);
-    // handleChange is now running (blocked on firstCall)
-    expect(callCount).toBe(1);
+    expect(calls).toBe(1); // first flush running, blocked
 
-    // Second change arrives while busy — should be rescheduled, not dropped
-    schedule('/tmp/proj/src/a.ts');
+    // New change arrives while busy — accumulates in pending, not dropped.
+    enqueue('/tmp/proj/src/b.ts');
     await vi.advanceTimersByTimeAsync(100);
-    // Still blocked — rescheduled change fires but sees busy, reschedules again
-    expect(callCount).toBe(1);
+    expect(calls).toBe(1); // still single-flight
 
-    // Unblock first handleChange
     resolveFirst();
     await vi.advanceTimersByTimeAsync(200);
-
-    // Rescheduled change should now have fired
-    expect(callCount).toBe(2);
+    expect(calls).toBe(2); // pending 'b.ts' flushed after the first finished
   });
 });
 
@@ -614,16 +611,16 @@ describe('McpWatcher — real chokidar prunes build dirs (does not FD-storm targ
   // chokidar (not the module mock above) via a fresh dynamic import in an
   // isolated module registry.
   it('watches source but never opens target/ children', async () => {
-    const { mkdtemp, writeFile, mkdir } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
+    const { mkdtemp: mkdtempReal, writeFile: writeFileReal, mkdir: mkdirReal } = await import('node:fs/promises');
+    const { tmpdir: tmpdirReal } = await import('node:os');
     const { join: pjoin } = await import('node:path');
 
-    const root = await mkdtemp(pjoin(tmpdir(), 'mcp-prune-'));
-    await mkdir(pjoin(root, 'src'), { recursive: true });
-    await mkdir(pjoin(root, 'target', 'debug', 'deps'), { recursive: true });
-    await writeFile(pjoin(root, 'src', 'main.rs'), 'fn main() {}');
+    const root = await mkdtempReal(pjoin(tmpdirReal(), 'mcp-prune-'));
+    await mkdirReal(pjoin(root, 'src'), { recursive: true });
+    await mkdirReal(pjoin(root, 'target', 'debug', 'deps'), { recursive: true });
+    await writeFileReal(pjoin(root, 'src', 'main.rs'), 'fn main() {}');
     for (let i = 0; i < 40; i++) {
-      await writeFile(pjoin(root, 'target', 'debug', 'deps', `f${i}.rs`), '// gen');
+      await writeFileReal(pjoin(root, 'target', 'debug', 'deps', `f${i}.rs`), '// gen');
     }
 
     // Use the real chokidar + the real ignore predicate, not the vi.mock.

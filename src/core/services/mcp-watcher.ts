@@ -442,15 +442,22 @@ export class McpWatcher {
   /**
    * True when this watcher writes to the canonical `<root>/.openlore/analysis`
    * layout that the MCP read handlers cache against. Only then is the shared
-   * in-memory cache (readCachedContext / primeContextCache) the right channel; a
-   * custom `outputPath` (tests / non-standard installs) reads & writes directly.
+   * in-memory read cache (primeContextCache) the right channel to prime; a custom
+   * `outputPath` (tests / non-standard installs) writes only to disk.
    */
   private get usesStandardLayout(): boolean {
     return this.outputPath === join(this.rootPath, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
   }
 
+  /**
+   * Load the context the watcher is about to patch. This ALWAYS reads fresh from
+   * disk — never through the shared read cache — because the cache is a read-path
+   * (tool-call) optimization, and patching a possibly-stale cached object could
+   * silently drop signatures written by a concurrent `analyze` between events.
+   * The writer reads ground truth; persistContext then primes the read cache with
+   * the result so the next tool call is still a hit (Step 2a, G1).
+   */
   private async loadContext(): Promise<CachedContext | null> {
-    if (this.usesStandardLayout) return readCachedContext(this.rootPath);
     try {
       const raw = await readFile(this.contextPath, 'utf-8');
       return JSON.parse(raw) as CachedContext;
@@ -463,9 +470,7 @@ export class McpWatcher {
     // Strip the runtime-only EdgeStore handle before serializing.
     const { edgeStore: _edgeStore, ...serializable } = context as CachedContext & { edgeStore?: unknown };
     void _edgeStore;
-    const _payload = JSON.stringify(serializable, null, 2);
-    await writeFile(this.contextPath, _payload, 'utf-8');
-    process.stderr.write(`[DEBUG persist] wrote sigs=${JSON.stringify((serializable.signatures||[]).map(s=>s.path))} bytes=${_payload.length} path=${this.contextPath}\n`);
+    await writeFile(this.contextPath, JSON.stringify(serializable, null, 2), 'utf-8');
     // Hand the patched object back to the read cache, aligned to the new on-disk
     // mtime, so the next tool call is a cache hit (no cold re-parse). This is the
     // fix for root-cause item 2 (mtime bump forcing a full re-read). Only valid
