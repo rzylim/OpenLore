@@ -31,7 +31,12 @@ Branch: `openlore-spec-13-context-substrate`. Direction locked; claims verified;
 - [ ] **Spec 16** — Architectural Decisions as First-Class Graph Nodes (`affects` edges). → [openlore-spec-16-decisions-as-graph-nodes.md](openlore-spec-16-decisions-as-graph-nodes.md)
 - [ ] **Spec 17** — Cross-Domain Impact Analysis (Code ↔ Infrastructure). → [openlore-spec-17-cross-domain-impact.md](openlore-spec-17-cross-domain-impact.md)
 - [ ] **Spec 18** — Local Provenance Edges (Git & PR metadata, no OAuth). → [openlore-spec-18-local-provenance-edges.md](openlore-spec-18-local-provenance-edges.md)
-- [ ] **Horizon 3 (optional, may never ship)** — cloud OAuth connectors as a fire-walled plugin. Deliberately *not* a numbered spec until 14–18 land and prove the local-first thesis.
+- [ ] **Spec 19** — Deterministic Test Impact Selection (headline Layer-3 instrument). → [openlore-spec-19-test-impact-selection.md](openlore-spec-19-test-impact-selection.md)
+- [ ] **Spec 20** — Reachability & Dead-Code Analysis. → [openlore-spec-20-reachability-dead-code.md](openlore-spec-20-reachability-dead-code.md)
+- [ ] **Spec 21** — Structural Change Analysis (graph diff). → [openlore-spec-21-structural-change-analysis.md](openlore-spec-21-structural-change-analysis.md)
+- [ ] **Spec 22** — Change-Coupling & Volatility Analysis. → [openlore-spec-22-change-coupling-volatility.md](openlore-spec-22-change-coupling-volatility.md)
+- [ ] **Spec 23** — Architecture Invariant Guardrails. → [openlore-spec-23-architecture-invariants.md](openlore-spec-23-architecture-invariants.md)
+- [ ] **Horizon 3 (optional, may never ship)** — cloud OAuth connectors as a fire-walled plugin. Deliberately *not* a numbered spec until 14–23 land and prove the local-first thesis.
 
 ---
 
@@ -84,19 +89,21 @@ does not belong here.
 
 This is growth along the axis OpenLore already chose, not a turn onto a new one:
 
-| | Today | After specs 14–18 (still local, still key-free, still coding-first) |
+| | Today | After specs 14–23 (still local, still key-free, still coding-first) |
 |---|---|---|
 | **Core artifact** | Deterministic code call graph | Same graph, now spanning code **+ infrastructure + decisions** on one primitive |
 | **What `orient()` answers** | who-calls / what-breaks / call-path / insertion points / spec matches | + code→infra blast radius; + "who last changed this, under which PR/decision" |
+| **What it can *compute* (Layer 3)** | shallow callers / direct impact | + which tests to run, reachability/dead-code, structural diff of a change, change-coupling, invariant checks |
 | **Decisions** | LLM-extracted, stored in a side-file, surfaced by a string filter | First-class graph nodes with `affects` edges, traversable by `analyze_impact` |
 | **Evidence** | "saves 15–50k tokens" (unmeasured claim) | A reproducible WITH-vs-WITHOUT benchmark, published |
 | **Audience** | Coding agents | **Unchanged** — coding agents |
 | **Network** | Optional (specs/LLM only) | **Unchanged** — core stays offline; cloud is opt-in Horizon-3 only |
 
-The product goes from *"a map of your code"* to *"the always-fresh structural and governance
-memory of your code, the infra it deploys to, and the decisions that shaped it"* — a wider view
-of **the same developer's world**, for **the same audience**, with **the same local-first,
-deterministic guarantees**. That is "grow up and out," not pivot.
+The product goes from *"a map of your code"* to *"the always-fresh map of your code — the infra
+it deploys to and the decisions that shaped it — plus the deterministic analysis (impact, tests,
+coupling, invariants) computed over it"* — a wider view of **the same developer's world**, for
+**the same audience**, with **the same local-first, deterministic guarantees**. That is "grow up
+and out," not pivot.
 
 ---
 
@@ -208,23 +215,82 @@ on 2026-05-30.
 
 ## Recommended Direction
 
-> **OpenLore is the always-fresh, deterministic *structural substrate beneath* agentic search —
-> it answers who-calls / what-breaks / call-path in one sub-millisecond MCP call against a typed
-> code graph that also spans infrastructure, and it uniquely pairs that graph with a governance
-> layer (recorded decisions + a spec-drift gate) that no navigation competitor ships.**
+> **OpenLore is the deterministic *analysis layer* for AI coding agents: a local, always-fresh
+> graph of the code — and the infrastructure and decisions around it — over which it *computes*
+> the facts a model cannot cheaply derive by reading. What breaks if I change this? Which tests
+> cover it? What is it coupled to? What rule would this violate? One MCP call, computed not
+> guessed. It *complements* agentic search (retrieval); it does not compete with it.**
 
-The substrate is the **credibility proof**, not the pitch. The pitch is the two things the
-crowded cohort does not have: **cross-domain (code↔infra) impact** and **decision/drift
-governance coupled to the graph.**
+This is an *evolution* of the existing product, not a replacement. The map (Layer 1) and the
+why-layer (Layer 2) remain exactly as they are; the analysis (Layer 3) is computed on top of
+them. See "The analysis layer" immediately below for the full framing.
 
-**Defense against the strongest attack** — the marginal-value / "Cherny killed the index"
-objection: Anthropic moved Claude Code off a *semantic RAG embeddings* index, a like-for-like
-substitution where lexical grep genuinely won. OpenLore is not a semantic retriever; it is a
-**typed relational graph** answering reverse-edge and transitive-impact queries that iterative
-grep+read can only reconstruct through many round-trips. The staleness tax Cherny rejected was a
-*batch re-index*; OpenLore answers it with **incremental** watcher updates, so the staleness
-surface is small. This survives — but only once the benchmark (step 1) proves the round-trip
-savings are real. Until then it is a hypothesis, not a result.
+**Why this is the durable bet.** The frontier labs are commoditizing *retrieval* — agentic
+search, larger context windows, and smarter models are turning "find the relevant code" into
+something the model does for itself. They are **not** building *analysis* (facts computed by
+graph algorithms): the model is structurally poor at it, it is expensive to do in-context, and a
+free, local, cross-language analysis engine is nobody's business model. The retrieval-MCP cohort
+(CodeGraph, Serena, tokensave) also stops at navigation. Analysis is open white space — and it is
+exactly what a deterministic graph is *for*.
+
+**Defense against the strongest attack** — the "Cherny killed the index" objection: Anthropic
+moved Claude Code off a *semantic RAG embeddings* index, a like-for-like substitution where
+lexical grep genuinely won. OpenLore is not a semantic retriever; it computes *relational and
+transitive facts* (impact, reachability, test coverage, coupling, invariants) that iterative
+grep+read can only reconstruct over many round-trips and many tokens. The staleness tax Cherny
+rejected was a *batch re-index*; OpenLore stays fresh incrementally. This survives — but the
+public tagline only earns itself once the Spec 14 benchmark proves the savings are real. Build
+the layer now; let the numbers earn the claim.
+
+---
+
+## The analysis layer (Layer 3): retrieval vs. analysis
+
+Three layers, nothing removed, each built on the one below:
+
+- **Layer 1 — the map** *(shipping today)*: **structure.** What exists, where execution enters,
+  how calls flow. The call/IaC graph, `orient()`, `CODEBASE.md`.
+- **Layer 2 — the why** *(shipping today)*: **intent.** Living specs, recorded decisions, drift.
+- **Layer 3 — the analysis** *(the evolution)*: **consequences.** Deterministic facts *computed
+  over Layers 1–2* that no amount of reading reveals cheaply — what breaks, what to test, what is
+  coupled, what is reachable, what rule a change would violate.
+
+**The metaphor.** The agent has **eyes** (grep/read) and a **brain** (the model). The labs are
+sharpening both. Nobody is building the **instruments** — the altimeter and radar a pilot
+*computes* rather than looks at. OpenLore is the instruments. A smarter brain makes the
+instruments *more* valuable, not less — which is precisely why Layer 3 complements the labs
+instead of competing with them.
+
+**Layer 3 cannot exist without Layers 1–2,** so the current product becomes the foundation, not
+legacy: test selection reads `tested_by` + call edges; reachability is BFS over existing nodes;
+co-change reads git; invariants read the dependency graph. Every instrument makes `orient()` more
+useful. This is the literal meaning of "grow up and out without deleting anything."
+
+Specs 16–18 are already Layer-3 instruments (decisions made queryable; code↔infra impact;
+provenance). The cluster below makes the layer explicit and leads with the clearest demonstration.
+
+### Analysis instruments (the Layer-3 cluster)
+
+Each is deterministic, computed once and cached, reuses the existing graph, and answers a
+question grep cannot follow and the model is expensive at — and each stands on established
+computer science rather than novelty for its own sake.
+
+| Spec | Instrument | Prior art it stands on | Reuses |
+|---|---|---|---|
+| **19** | **Deterministic Test Impact Selection** — "you changed X; run exactly these tests" | Regression test selection (Ekstazi; RTS++ call-graph-based) | `tested_by` + call edges (already in the graph) |
+| **20** | **Reachability & Dead-Code Analysis** — reachable from any entry point? dead if I delete X? | knip / ts-prune (TS-only); mark-and-sweep from entry points | graph reachability (BFS) |
+| **21** | **Structural Change Analysis** — graph-level diff of a change: edges added/removed, stale callers | semantic / AST diff (difftastic) | diff of two graph snapshots |
+| **22** | **Change-Coupling & Volatility** — files/functions that always change together; churn hotspots | logical / change coupling (CodeScene) | git history (Spec 18's ingestion) |
+| **23** | **Architecture Invariant Guardrails** — "may I import X here?" answered *before* the edit | architecture fitness functions (ArchUnit, dependency-cruiser, import-linter) | dependency graph + Spec 16's decision machinery |
+
+**Backlog (not yet specced — captured so the intent is recorded):**
+
+- **Dependency-upgrade blast radius** — "you are bumping this library; here are the exact
+  functions of yours that call the changed APIs." External-dependency tracking × call graph.
+- **Coarse source→sink reachability** — "every path that reaches the payments/auth/DB sink." The
+  security flavor of reachability; indirect paths grep cannot follow.
+
+These layer on **after** Spec 14 proves the map pays its way. The benchmark is still the gate.
 
 ---
 
@@ -279,6 +345,11 @@ Each step ships on what exists and makes the next cheaper.
 7. **(Horizon-3, optional, may never ship) Cloud OAuth connectors** as a fire-walled, opt-in
    plugin. Only after 1–5 prove the local join is adopted. The *only* step where cloud enters.
 
+Steps 3–4 are already the first **analysis instruments** (decisions-as-graph, code↔infra impact).
+The rest of the Layer-3 cluster — **specs 19–23** (test selection, reachability/dead-code,
+structural diff, change-coupling, invariant guardrails) — layers on after step 1's benchmark.
+See "The analysis layer" above. The benchmark remains the gate for all of it.
+
 ---
 
 ## What to explicitly NOT build
@@ -302,11 +373,13 @@ Each step ships on what exists and makes the next cheaper.
 
 ## Positioning
 
-> **OpenLore is the always-fresh code graph beneath your agent: one `orient()` call gives
-> who-calls, what-breaks, and call-path that grep would burn 20 round-trips to rebuild — plus
-> the only decision-and-drift governance layer that travels with the code.**
+> **OpenLore is the deterministic analysis layer beneath your coding agent: one call tells it
+> what a change breaks, which tests to run, what's coupled, and what architectural rule it would
+> violate — facts *computed* over a local, always-fresh graph, not guessed.**
 
-Local-first. Token-scoped. Auditable edges. Code *and* infrastructure on one graph.
+Local-first. Key-free core. Auditable, deterministic edges. Code *and* infrastructure on one
+graph. *(Public tagline gated on the Spec 14 benchmark — build the instruments first, let the
+numbers earn the claim.)*
 
 ---
 

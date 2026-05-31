@@ -31,6 +31,9 @@ prime constraint: **local, deterministic, nothing uploaded.** It is the delibera
 cloud OAuth connectors, which Spec 13 fences to an optional far-horizon plugin precisely because
 they would forfeit this local-only guarantee.
 
+The git history this ingests is also the data source for the **change-coupling & volatility
+instrument (Spec 22)**: provenance edges here, statistical co-change analysis there.
+
 ## Scope contract — do not break these things
 
 This PR must NOT:

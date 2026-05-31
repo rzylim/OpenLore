@@ -30,6 +30,10 @@ active here. An unused differentiator reads as "a feature even the authors do no
 (promoting decisions to graph nodes) also depends on there being real decisions to project.
 This spec turns the system on, on ourselves, and produces the evidence.
 
+In the Spec 13 layering this is the **why-layer (Layer 2)**, and it is what the architecture-
+invariant instrument (Spec 23) consults at edit time. Dogfooding here is what makes that
+downstream analysis credible rather than theoretical.
+
 ## Scope contract — do not break these things
 
 This PR must NOT:

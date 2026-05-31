@@ -31,6 +31,9 @@ it governs turns the filter into the deterministic join Spec 13 calls for, and m
 "what decisions govern this code, and what does changing it implicate?" answerable by the same
 impact machinery as code edges. This is the relationship no navigation competitor offers.
 
+In the Spec 13 layering this is itself a **Layer-3 analysis instrument** (decisions made
+queryable), and it is the substrate the architecture-invariant guardrails (Spec 23) build on.
+
 The pattern already exists in the repo: the IaC subsystem projects external records onto the
 existing `FunctionNode` / `CallEdge` / `ClassNode` primitives via a parser→projector split
 ([iac/types.ts](../../src/core/analyzer/iac/types.ts),

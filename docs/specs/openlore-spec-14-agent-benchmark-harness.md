@@ -31,7 +31,8 @@ publishes the exact benchmark we lack: median of 4 runs across 7 OSS repos, head
 with/without its MCP server, reporting cost / tokens / tool-calls / wall-clock. We need our own,
 apples-to-apples. This harness is also the **kill-signal instrument** from Spec 13: if the
 measured reduction on relational queries is small, that is the earliest signal to re-weight
-toward the governance layer.
+toward the governance layer. And it is the **gate for the entire Layer-3 analysis cluster**
+(specs 19–23): those instruments layer on only after this benchmark shows the graph earns its keep.
 
 ## Scope contract — do not break these things
 
@@ -58,7 +59,9 @@ This PR must:
 - **Task suite** — queries where a relational graph is structurally cheaper than iterative
   grep+read: enumerate callers of a symbol, blast radius of a signature change, a call path
   between two functions, plus a "find where feature X lives" control task. Tasks must have
-  checkable answers so a run can be scored, not just measured.
+  checkable answers so a run can be scored, not just measured. As Layer-3 instruments ship
+  (specs 19–23), add their tasks too — e.g. "which tests cover this change?" — so the benchmark
+  measures the analysis layer, not just orientation.
 - **Harness** — toggles the openlore MCP server in the agent config, runs each task N≥4 times
   per repo across ≥5 pinned repos, and records the metrics. Determinism: pin repo SHAs; fix the
   model; record the agent/CLI version.

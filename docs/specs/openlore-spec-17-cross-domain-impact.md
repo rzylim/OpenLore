@@ -30,6 +30,9 @@ paths are affected?" This is the most distinctive capability OpenLore can demons
 code-only navigation tool or a grep-based agent structurally cannot answer it. The work is
 wiring and surfacing, not new parsing.
 
+In the Spec 13 layering this is the **first cross-domain Layer-3 analysis instrument**: a
+consequence *computed* over the unified graph, not a retrieval.
+
 ## Scope contract — do not break these things
 
 This PR must NOT:
