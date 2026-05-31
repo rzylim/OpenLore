@@ -19,14 +19,38 @@ Branch: `openlore-spec-13.1-watch-mode-performance` (proposed). Root cause confi
       on the remote, but their output came back in large delayed drains."* Only began once the
       `openlore` MCP server was registered in those repos.
 - [x] Root cause traced to the watch-mode re-index pipeline (this document, "Root cause").
-- [ ] **Step 1** — Coalesce per-file events into a single batched flush (one write per burst).
-- [ ] **Step 2** — Make the `llm-context.json` update cheap and stop busting the read cache.
-- [ ] **Step 3** — Make the vector-index update a real incremental row op (no full-table rewrite).
-- [ ] **Step 4** — Decouple embedding freshness from signature freshness (signatures land instantly).
-- [ ] **Step 5** — Backpressure + VCS-flood detection (branch switch ⟹ one refresh, not N).
-- [ ] **Step 6** — stderr discipline (one summary line per batch; verbose behind a debug flag).
-- [ ] **Step 7** — Reconcile docs/install text with the on-by-default reality.
-- [ ] **Step 8** — Watch-mode microbenchmark + regression tests.
+- [x] **Step 1** — Coalesce per-file events into a single batched flush (one write per burst).
+      `McpWatcher` now uses one `pending` Set + a single debounce timer + a `maxBatchMs`
+      ceiling; `handleChange(path)` delegates to `handleBatch([path])`.
+- [x] **Step 2** — Make the `llm-context.json` update cheap and stop busting the read cache.
+      Implemented 2a: `primeContextCache` (new export in `mcp-handlers/utils.ts`) hands the
+      patched context to the read cache so the next tool call is a HIT (0 ms vs ~19 ms cold),
+      and the ~2.7 MB disk write is write-behind (deferred + coalesced via `maxBatchMs`).
+- [x] **Step 3** — Make the vector-index update a real incremental row op (no full-table rewrite).
+      New `VectorIndex.updateFiles()` does `delete("filePath" IN …) + add(rows)` for the changed
+      files only and patches the BM25 corpus cache in place; the cold `build()` path is untouched.
+- [x] **Step 4** — Decouple embedding freshness from signature freshness (signatures land instantly).
+      Signatures persist synchronously first; the vector update runs on a separate lower-priority
+      embed lane. Added `--watch-no-embed` + auto-degrade above `WATCH_EMBED_FILE_CEILING` (5000).
+- [x] **Step 5** — Backpressure + VCS-flood detection (branch switch ⟹ one refresh, not N).
+      A `.git` ref watcher (HEAD/index/MERGE_HEAD/ORIG_HEAD) + a `WATCH_BULK_THRESHOLD` (25)
+      batch-size trip collapse a bulk event into one settled refresh; single-flight never interleaves.
+- [x] **Step 6** — stderr discipline (one summary line per batch; verbose behind a debug flag).
+      Default is one `[mcp-watcher] updated/coalesced N … (Mms)` line per batch; per-file/per-embed
+      detail is behind `OPENLORE_WATCH_DEBUG`.
+- [x] **Step 7** — Reconcile docs/install text with the on-by-default reality.
+      `docs/mcp-tools.md`, `README.md`, `src/cli/install/index.ts`, and the orient skill wrapper
+      now state watch is on by default, cheap/batched, and how to disable / run signatures-only.
+- [x] **Step 8** — Watch-mode microbenchmark + regression tests.
+      `scripts/bench-watch.ts` (+ `npm run bench:watch`, recorded in `scripts/BENCHMARKS.md`) plus
+      `mcp-watcher-incremental.test.ts` and `vector-index-updatefiles.test.ts`.
+
+**Measured (`npm run bench:watch`, synthetic 4.03 MB context, signatures-only):** single-save
+flush **4.5 ms**; next-call read after save **0.02 ms** (in-memory cache HIT) vs **4.4 ms** cold
+parse (≈256× on this fixture, widening with context size); 50-file burst → **1** flush (was 50
+full pipelines), coalesced flush **8 ms**. The decisive wins are the eliminated forced re-parse
+(G1) and the single-flush coalescing (G2). Satisfies G1, G2, G3, G4, G5, G6; G7 protected (cold
+`build()`/`analyze` paths untouched; full unit + relevant integration suites green).
 
 > **Not** addressed by PR #83 (Panic Response Layer). PR #83 touches `mcp.ts` and `vector-index.ts`
 > for panic/gryph concerns only; it does not change the `mcp-watcher` re-index pipeline,

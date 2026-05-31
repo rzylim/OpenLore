@@ -1286,6 +1286,7 @@ interface McpServerOptions {
   watch?: string;
   watchAuto?: boolean;
   watchDebounce?: string;
+  watchNoEmbed?: boolean;
   minimal?: boolean;
 }
 
@@ -1353,6 +1354,7 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
         autoWatcher = new McpWatcher({
           rootPath: resolve(dir),
           debounceMs: isNaN(debounceMs) ? 400 : debounceMs,
+          embed: !options.watchNoEmbed,
         });
         await autoWatcher.start();
         const cleanup = () => autoWatcher!.stop().then(() => process.exit(0));
@@ -1592,6 +1594,7 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
     const watcher = new McpWatcher({
       rootPath: resolve(options.watch),
       debounceMs: isNaN(debounceMs) ? 400 : debounceMs,
+      embed: !options.watchNoEmbed,
     });
     await watcher.start();
     const cleanup = () => watcher.stop().then(() => process.exit(0));
@@ -1610,5 +1613,6 @@ export const mcpCommand = new Command('mcp')
   .option('--watch-auto', 'Auto-detect the project directory from the first tool call and start watching', true)
   .option('--no-watch-auto', 'Disable auto-watch (use for one-shot tool calls, e.g. the orient skill wrapper)')
   .option('--watch-debounce <ms>', 'Debounce delay in ms before re-indexing after a file change (default: 400)', '400')
+  .option('--watch-no-embed', 'Watch signatures only — skip live vector re-embedding (embeddings refresh at commit). Large repos auto-degrade to this.')
   .option('--minimal', 'Expose only core 5 tools (orient, search_code, record_decision, detect_changes, check_spec_drift). Pair with alwaysLoad: true in Claude Code for always-visible core tools.')
   .action((options: McpServerOptions) => startMcpServer(options));

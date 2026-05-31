@@ -204,6 +204,37 @@ export function _resetVectorIndexCachesForTesting(): void {
   _metaCache.clear();
 }
 
+/**
+ * Surgically patch the cached BM25 corpus for `dbPath` (Spec 13.1): drop the
+ * rows belonging to `changedFilePaths` and splice in `newRows`, then rebuild the
+ * in-memory corpus. No disk read — if nothing is cached yet this is a no-op and
+ * the next search builds the corpus fresh from the table.
+ */
+function patchBm25Cache(dbPath: string, changedFilePaths: Set<string>, newRows: Record<string, unknown>[]): void {
+  const entry = _bm25Cache.get(dbPath);
+  if (!entry) return;
+  const kept = entry.rows.filter((r) => !changedFilePaths.has(r.filePath as string));
+  for (const r of newRows) kept.push(r);
+  const corpus = buildBm25Corpus(kept.map((r) => ({ id: r.id as string, text: r.text as string })));
+  _bm25Cache.set(dbPath, { corpus, rowCount: kept.length, rows: kept });
+}
+
+/**
+ * Build a LanceDB `` `filePath` IN (...) `` predicate, SQL-escaping each path.
+ *
+ * The column identifier MUST be **backtick**-quoted, not double-quoted: LanceDB's
+ * datafusion filter parser treats a double-quoted token as a *string literal*
+ * (so `"filePath" = 'x'` compares the constant string 'filePath' to 'x' and is
+ * always false — a silent no-op delete), and a *bare* `filePath` is lowercased to
+ * `filepath`, which errors (no such column). Backticks are the only form that
+ * binds to the camelCase column. Verified empirically against @lancedb/lancedb.
+ */
+function filePathInPredicate(paths: Set<string>): string | null {
+  if (paths.size === 0) return null;
+  const list = Array.from(paths).map((p) => `'${p.replace(/'/g, "''")}'`).join(', ');
+  return `\`filePath\` IN (${list})`;
+}
+
 // ============================================================================
 // HELPERS
 // ============================================================================
@@ -490,6 +521,157 @@ export class VectorIndex {
       total: fullRecords.length,
       hasEmbeddings: true,
     };
+  }
+
+  /**
+   * Watch-mode incremental update (Spec 13.1). Replace only the rows for the
+   * changed files with freshly-built records — a row-level delete+add instead of
+   * the full-corpus read+overwrite that build() performs. The cold build() path
+   * is untouched, protecting the `analyze --embed` contract (G7).
+   *
+   *  - Embedded index: reuse existing vectors for rows whose embed-text is
+   *    unchanged (queried for the changed files only, not the whole corpus),
+   *    embed just the new/changed texts, then delete the changed files' old rows
+   *    and add the rebuilt ones. The LanceDB table handle in _tableCache stays
+   *    valid across row ops, so search() does not pay a reconnect.
+   *  - BM25-only index: delete+add the changed files' documents and patch the
+   *    cached BM25 corpus in place rather than dropping the whole corpus cache.
+   */
+  static async updateFiles(
+    outputDir: string,
+    nodes: FunctionNode[],
+    changedFilePaths: Set<string>,
+    signatures: FileSignatureMap[],
+    hubIds: Set<string>,
+    entryPointIds: Set<string>,
+    embedSvc: EmbeddingService | null | undefined,
+    fileContents?: Map<string, string>,
+  ): Promise<{ embedded: number; reused: number; total: number; hasEmbeddings: boolean }> {
+    if (!VectorIndex.exists(outputDir)) {
+      return { embedded: 0, reused: 0, total: 0, hasEmbeddings: false };
+    }
+    const dbPath = join(outputDir, DB_FOLDER);
+    const existingMeta = readMeta(outputDir);
+    const indexHasEmbeddings = existingMeta === null ? true : existingMeta.hasEmbeddings;
+
+    // ── Build candidate records for the changed files' functions ──────────────
+    const sigIndex = buildSignatureIndex(signatures);
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const candidates: Omit<FunctionRecord, 'vector'>[] = nodes.map((node) => {
+      const cgDoc = node.docstring ?? '';
+      const cgSig = node.signature ?? '';
+      const { signature: regexSig, docstring: regexDoc } = findSignatureEntry(node, sigIndex);
+      const signature = cgSig || regexSig;
+      const docstring = cgDoc || regexDoc;
+      return {
+        id: node.id,
+        name: node.name,
+        filePath: node.filePath,
+        className: node.className ?? '',
+        language: node.language,
+        signature,
+        docstring,
+        fanIn: node.fanIn,
+        fanOut: node.fanOut,
+        isHub: hubIds.has(node.id),
+        isEntryPoint: entryPointIds.has(node.id),
+        text: buildText(node, signature, docstring, fileContents),
+      };
+    });
+    // Synthetic entries (constants / type aliases with no call-graph node) for
+    // the changed files only.
+    for (const fsm of signatures) {
+      if (!changedFilePaths.has(fsm.path)) continue;
+      for (const entry of fsm.entries) {
+        const syntheticId = `${fsm.path}::${entry.name}`;
+        if (nodeIds.has(syntheticId)) continue;
+        if (nodes.some((n) => n.filePath === fsm.path && n.name === entry.name)) continue;
+        const sig = entry.signature ?? '';
+        const doc = entry.docstring ?? '';
+        candidates.push({
+          id: syntheticId,
+          name: entry.name,
+          filePath: fsm.path,
+          className: '',
+          language: fsm.language,
+          signature: sig,
+          docstring: doc,
+          fanIn: 0,
+          fanOut: 0,
+          isHub: false,
+          isEntryPoint: false,
+          text: `[${fsm.language}] ${fsm.path} ${entry.name}\n${sig}${doc ? '\n' + doc : ''}`,
+        });
+      }
+    }
+
+    const { connect } = await import('@lancedb/lancedb');
+    const db = await connect(dbPath);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const table: any = await db.openTable(TABLE_NAME);
+    const predicate = filePathInPredicate(changedFilePaths);
+
+    // ── BM25-only index ───────────────────────────────────────────────────────
+    if (!embedSvc || !indexHasEmbeddings) {
+      if (predicate) await table.delete(predicate);
+      if (candidates.length > 0) {
+        await table.add(candidates as unknown as Record<string, unknown>[]);
+      }
+      patchBm25Cache(dbPath, changedFilePaths, candidates as unknown as Record<string, unknown>[]);
+      return { embedded: 0, reused: 0, total: candidates.length, hasEmbeddings: false };
+    }
+
+    // ── Embedded index: reuse unchanged vectors for the changed files only ────
+    const cachedVectors = new Map<string, number[]>(); // "id::text" → vector
+    if (predicate) {
+      try {
+        const existingRows = await table.query().where(predicate).toArray() as Record<string, unknown>[];
+        for (const row of existingRows) {
+          const id = row.id as string;
+          const text = row.text as string;
+          cachedVectors.set(`${id}::${text}`, Array.from(row.vector as ArrayLike<number>));
+        }
+      } catch {
+        // unreadable subset — embed everything fresh
+      }
+    }
+
+    const toEmbed: typeof candidates = [];
+    const toEmbedIdx: number[] = [];
+    const cachedIdx: number[] = [];
+    for (let i = 0; i < candidates.length; i++) {
+      const key = `${candidates[i].id}::${candidates[i].text}`;
+      if (cachedVectors.has(key)) cachedIdx.push(i);
+      else { toEmbed.push(candidates[i]); toEmbedIdx.push(i); }
+    }
+
+    let newVectors: number[][] = [];
+    if (toEmbed.length > 0) {
+      newVectors = await embedSvc.embed(toEmbed.map((r) => r.text));
+      if (newVectors.length !== toEmbed.length) {
+        throw new Error(`Embedding count mismatch: expected ${toEmbed.length}, got ${newVectors.length}`);
+      }
+    }
+
+    const fullRecords: FunctionRecord[] = new Array(candidates.length);
+    for (const idx of cachedIdx) {
+      const r = candidates[idx];
+      fullRecords[idx] = { ...r, vector: cachedVectors.get(`${r.id}::${r.text}`)! };
+    }
+    for (let i = 0; i < toEmbedIdx.length; i++) {
+      fullRecords[toEmbedIdx[i]] = { ...candidates[toEmbedIdx[i]], vector: newVectors[i] };
+    }
+
+    if (predicate) await table.delete(predicate);
+    if (fullRecords.length > 0) {
+      await table.add(fullRecords as unknown as Record<string, unknown>[]);
+    }
+
+    // Keep the table handle (_tableCache) — row ops don't invalidate it. Patch
+    // the BM25 corpus cache in place for the changed files.
+    patchBm25Cache(dbPath, changedFilePaths, fullRecords as unknown as Record<string, unknown>[]);
+
+    return { embedded: toEmbed.length, reused: cachedIdx.length, total: fullRecords.length, hasEmbeddings: true };
   }
 
   /**

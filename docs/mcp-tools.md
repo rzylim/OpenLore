@@ -49,13 +49,27 @@ Add `--watch-auto` to your MCP config args:
 }
 ```
 
-The watcher starts automatically on the first tool call — no hardcoded path needed. It re-extracts signatures for any changed source file and patches `llm-context.json` within ~500 ms of a save. If an embedding server is reachable, it also re-embeds changed functions into the vector index automatically. The call graph is not rebuilt on every change; it stays current via the [post-commit hook](#cicd-integration) (`openlore analyze --force`).
+The watcher is **on by default** — it starts automatically on the first tool call
+(no hardcoded path needed) and keeps the analysis fresh as you edit. To disable it,
+start the server with `openlore mcp --no-watch-auto`.
+
+Freshness is **O(change), not O(repo)** (Spec 13.1): per-file save events are coalesced
+into a single batched flush, the patched signatures are handed directly to the MCP read
+cache (so the next tool call is a cache hit, not a cold re-parse of `llm-context.json`),
+and the vector index is updated with row-level ops rather than a full-table rewrite.
+A bulk event (branch switch / rebase / formatter) collapses to a single refresh. On large
+repos (> 5000 source files) live embedding auto-degrades to signatures-only (logged once);
+embeddings then refresh at commit. Set `OPENLORE_WATCH_DEBUG=1` for per-file stderr detail
+(default is one summary line per batch). The call graph is not rebuilt on every change; it
+stays current via the [post-commit hook](#cicd-integration) (`openlore analyze --force`).
 
 | Option | Default | Description |
 |---|---|---|
-| `--watch-auto` | off | Auto-detect project root from first tool call |
+| `--watch-auto` | **on** | Auto-detect project root from first tool call |
+| `--no-watch-auto` | — | Disable the auto-watcher (one-shot tool calls) |
 | `--watch <dir>` | — | Watch a fixed directory (alternative to `--watch-auto`) |
-| `--watch-debounce <ms>` | 400 | Delay before re-indexing after a file change |
+| `--watch-debounce <ms>` | 400 | Idle delay before a coalesced flush after a change |
+| `--watch-no-embed` | off | Signatures-only: skip live re-embedding (refresh at commit) |
 
 ### Cline / Roo Code / Kilocode
 

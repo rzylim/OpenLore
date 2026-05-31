@@ -27,6 +27,7 @@
     "view": "tsx src/cli/index.ts view",
     "bench": "tsx scripts/bench.ts",
     "bench:mcp": "tsx scripts/bench-mcp.ts",
+    "bench:watch": "tsx scripts/bench-watch.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",

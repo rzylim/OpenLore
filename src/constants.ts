@@ -549,3 +549,36 @@ export const DECISIONS_CONSOLIDATION_MAX_TOKENS = 2_000;
 
 /** Max output tokens for verification LLM call */
 export const DECISIONS_VERIFICATION_MAX_TOKENS = 1_500;
+
+// ============================================================================
+// WATCH MODE (MCP incremental re-index) — Spec 13.1
+// ============================================================================
+// Defaults chosen to keep --watch-auto on by default while making incremental
+// freshness O(change), not O(repo). See docs/specs/openlore-spec-13.1-*.
+
+/** Idle quiet period (ms) before a coalesced flush after the last file change. */
+export const WATCH_DEBOUNCE_MS = 400;
+
+/**
+ * Hard ceiling (ms) that forces a flush even under a continuous change stream,
+ * so a steady drip of edits never starves the queue indefinitely.
+ */
+export const WATCH_MAX_BATCH_MS = 2000;
+
+/**
+ * Number of files in a single coalesced flush that trips VCS-flood handling
+ * (a branch switch / rebase / formatter touching many files at once).
+ */
+export const WATCH_BULK_THRESHOLD = 25;
+
+/**
+ * Above this many watched source files, live embedding auto-degrades to
+ * signatures-only; embeddings refresh at commit (post-commit analyze --embed).
+ */
+export const WATCH_EMBED_FILE_CEILING = 5000;
+
+/**
+ * Quiet period (ms) after a detected VCS bulk operation (.git/HEAD or index
+ * churn) before a single coalesced refresh runs, so the whole op settles first.
+ */
+export const WATCH_VCS_SETTLE_MS = 750;

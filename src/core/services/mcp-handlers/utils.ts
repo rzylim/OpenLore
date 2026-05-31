@@ -121,6 +121,38 @@ export function _resetContextCacheForTesting(): void {
   _contextCache.clear();
 }
 
+/**
+ * Watch-mode handoff (Spec 13.1). Push an updated context into the in-memory
+ * read cache so the next tool call is a cache HIT — no 2.1 MB disk re-parse —
+ * even though the watcher only patched a few signatures. Keyed identically to
+ * {@link readCachedContext} (resolved project directory).
+ *
+ * The cached `mtime` is set to the current on-disk `llm-context.json` mtime so
+ * the entry stays valid until the file genuinely changes on disk again:
+ *   • watcher patches in memory but defers the disk write → disk mtime is
+ *     unchanged → this entry matches → hit returns the patched context;
+ *   • watcher writes the file then primes → disk mtime is the just-written one
+ *     → this entry matches → hit, no cold re-parse of what we just wrote;
+ *   • some other process (e.g. `openlore analyze`) rewrites the file → its mtime
+ *     differs from this entry → next read MISSes and re-reads disk → correct.
+ */
+export async function primeContextCache(directory: string, ctx: CachedContext): Promise<void> {
+  const analysisDir = join(directory, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+  const filePath = join(analysisDir, ARTIFACT_LLM_CONTEXT);
+  let mtime: number;
+  try {
+    mtime = (await stat(filePath)).mtimeMs;
+  } catch {
+    return; // no artifact on disk yet — nothing to stay fresh against
+  }
+  const existing = _contextCache.get(directory);
+  // Preserve an already-open EdgeStore handle if the new ctx doesn't carry one.
+  if (existing?.ctx.edgeStore && !ctx.edgeStore) {
+    ctx.edgeStore = existing.ctx.edgeStore;
+  }
+  _contextCache.set(directory, { ctx, mtime });
+}
+
 export async function readCachedContext(directory: string, timeout?: number): Promise<CachedContext | null> {
   const analysisDir = join(directory, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
   const filePath = join(analysisDir, ARTIFACT_LLM_CONTEXT);
