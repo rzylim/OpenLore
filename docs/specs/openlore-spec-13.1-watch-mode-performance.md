@@ -12,7 +12,20 @@
 
 ## Progress
 
-Branch: `openlore-spec-13.1-watch-mode-performance` (proposed). Root cause confirmed against the code.
+**STATUS: SHIPPED in v2.0.6** (2026-06-01) — PRs #102 (fix), #103 (handoff regression test),
+#106 (release + tag/version guard). The field symptom PR #102 could not reproduce was later
+reproduced and the fix validated against enklayve's **real 2.1 MB `llm-context.json`** corpus
+(drive the real `McpWatcher` through real chokidar on a copy of enklayve's `.openlore/analysis`,
+comparing published 2.0.5 vs the fix, median of 5):
+
+| | 2.0.5 (old) | 2.0.6 (fix) |
+|---|---|---|
+| 15-file burst — processing | ~5,900 ms (30 serialized O(repo) passes) | **443 ms** (1 coalesced flush) |
+| 15-file burst — stderr lines | 46 | **2** |
+| Next tool-call read after a save | ~4.6 ms (cold 2.1 MB re-parse) | **0.03 ms** (cache hit) |
+| Single-save flush | ~276 ms | ~220 ms (no regression — G7) |
+
+Branch: `openlore-spec-13.1-watch-mode-performance`. Root cause confirmed against the code.
 
 - [x] Symptom reproduced from the field: multiple Claude Code sessions across multiple dogfooded
       repos report *"severe, batched result-delivery latency — commands ran correctly on disk and

@@ -16,7 +16,7 @@ AI agents are powerful but amnesiac. On every new task:
 - They re-read the same source files to understand structure
 - They forget architectural decisions made two sessions ago
 - They have no link between specs and code — drift is invisible
-- File-by-file navigation often burns **15,000–50,000 tokens** per orientation pass, before a single line of useful code is written
+- File-by-file navigation often burns an estimated **15,000–50,000 tokens** per orientation pass, before a single line of useful code is written (measured benefit is task-dependent — it shows up on deep questions in larger codebases, not on small/familiar repos; see the † note below)
 - In long sessions, they drift from authoritative retrieval toward internally cached reasoning — producing subtly wrong architectural assumptions that compound silently until a refactor breaks
 
 openlore closes this loop. Run a full analysis once, then keep the graph incrementally updated as the codebase evolves. Even greenfield projects become cognitively "brownfield" after only a few agent sessions — architectural context fragments, decisions disappear, and agents repeatedly reconstruct the same understanding from scratch.
@@ -47,9 +47,24 @@ You can use layer 1 alone to give agents structural context. Add layer 2 for sem
 | Spec drift detection | ❌ | ❌ | ✓ milliseconds, no API |
 | Architectural decision gates | ❌ | ❌ | ✓ pre-commit hook |
 | Offline structural analysis | ❌ | ❌ | ✓ |
-| Token-efficient orient() | ❌ | ❌ | ✓ ~1–3k vs 15–50k tokens |
+| Token-efficient orient() | ❌ | ❌ | ✓ ~1–3k vs 15–50k tokens † |
 | Living spec generation | ❌ | ❌ | ✓ |
 | Persistent cross-session architectural memory | ❌ | Partial | ✓ |
+
+† **Measured, and it depends on the task.** The exact token figures above remain
+an estimate, but the Spec 14 agent benchmark (`npm run bench:agent`, WITH vs
+WITHOUT openlore, `claude -p`, N=4 medians) now gives a measured two-tier result:
+- **Small, familiar repos + shallow "who-calls-X" queries:** openlore *adds*
+  ~43% cost — the model already knows the code, so there's no orientation to save.
+- **Larger codebases + deep "how does X flow through Y" questions (its target):**
+  with the lean `--preset navigation` tool surface, openlore is a **net win —
+  −7% cost and −26% tool-calls at N=4, scaling with repo size (up to −21% on
+  ~640–790-file repos)**, at 100% answer correctness in both arms.
+
+So the headline savings hold where openlore is designed to help, not on toy
+queries. Full results, methodology, and honest caveats:
+[docs/AGENT-BENCHMARKS.md](docs/AGENT-BENCHMARKS.md). The plumbing latency (orient
+~430µs p50) is separate and real — see [scripts/BENCHMARKS.md](scripts/BENCHMARKS.md).
 | Long-session confidence decay (Epistemic Lease) | ❌ | ❌ | ✓ |
 
 Traditional coding agents reconstruct architecture from repeated file reads every session. openlore persists it as a queryable graph.
@@ -82,7 +97,7 @@ See [docs/install.md](docs/install.md). The MCP server keeps the index fresh as 
 
 Then ask your agent: **`orient("add a new payment method")`**
 
-That single call returns the relevant functions, their call neighbours, matching spec sections, and insertion-point candidates — preserving architectural continuity across sessions instead of forcing the agent to repeatedly reconstruct context from raw file reads. In practice, this often reduces orientation cost from ~30,000 exploratory tokens to ~1,000 targeted tokens.
+That single call returns the relevant functions, their call neighbours, matching spec sections, and insertion-point candidates — preserving architectural continuity across sessions instead of forcing the agent to repeatedly reconstruct context from raw file reads. The Spec 14 benchmark ([docs/AGENT-BENCHMARKS.md](docs/AGENT-BENCHMARKS.md)) measures this directly: on deep "how does X flow through Y" questions in larger codebases, openlore (with `--preset navigation`) cuts cost ~7% and tool-calls ~26% at N=4 (more on bigger repos); on small/familiar repos with shallow queries it adds overhead instead. Net: it pays off in its target arena, not on toy queries.
 
 **Full pipeline** (specs + decisions — optional and additive):
 

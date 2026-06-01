@@ -26,7 +26,7 @@ Branch: `openlore-spec-13-context-substrate`. Direction locked; claims verified;
 - [x] Competitive + market reality verified against primary sources (2026-05-30)
 - [x] Repo ground-truth established (what actually ships vs. what was claimed)
 - [x] Theses adversarially stress-tested; positioning corrected to survive the strongest attack
-- [ ] **Spec 13.1** — Make Incremental Freshness Cheap (Watch-Mode Performance). *Urgent regression fix — do this before 14; the watcher that backs this spec's "always-fresh" promise currently taxes every dogfooding session.* → [openlore-spec-13.1-watch-mode-performance.md](openlore-spec-13.1-watch-mode-performance.md)
+- [x] **Spec 13.1** — Make Incremental Freshness Cheap (Watch-Mode Performance). **Shipped in v2.0.6** (PRs #102/#103/#106). Field-validated on enklayve's real 2.1 MB corpus: a 15-file burst dropped from ~5,900 ms / 46 stderr lines (2.0.5) to 443 ms / 2 (2.0.6); next-call read after a save from a 4.6 ms cold re-parse to a 0.03 ms cache hit. → [openlore-spec-13.1-watch-mode-performance.md](openlore-spec-13.1-watch-mode-performance.md)
 - [ ] **Spec 14** — Agent Token-Efficiency Benchmark Harness (WITH vs WITHOUT). *Do this first (after 13.1).* → [openlore-spec-14-agent-benchmark-harness.md](openlore-spec-14-agent-benchmark-harness.md)
 - [ ] **Spec 15** — Decision & Drift Governance Dogfooding (turn the gate on in our own repo). → [openlore-spec-15-governance-dogfooding.md](openlore-spec-15-governance-dogfooding.md)
 - [ ] **Spec 16** — Architectural Decisions as First-Class Graph Nodes (`affects` edges). → [openlore-spec-16-decisions-as-graph-nodes.md](openlore-spec-16-decisions-as-graph-nodes.md)

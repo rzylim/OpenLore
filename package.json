@@ -28,6 +28,7 @@
     "bench": "tsx scripts/bench.ts",
     "bench:mcp": "tsx scripts/bench-mcp.ts",
     "bench:watch": "tsx scripts/bench-watch.ts",
+    "bench:agent": "tsx scripts/bench-agent.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
