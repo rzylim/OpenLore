@@ -62,9 +62,27 @@ The system SHALL process data through defined layers:
 - **GIVEN** an incoming request
 - **WHEN** the request is processed
 - **THEN** data flows through: CLI command → API endpoint → service → analyzer → repository; results are returned to the user via CLI output or API responses
+### Requirement: NorthStarIsADeterministicStructuralContextSubstrateForCodingAgents
+
+The system SHALL provide deterministic, locally-computed structural context as a substrate for coding agents, grounding all capabilities in static analysis rather than LLM inference.
+
+> Decision recorded: c6d1ad07
+> Date: 2026-06-01
 
 ## Technical Notes
 
 - **Architecture Style**: Layered architecture: CLI interface → API layer → service layer → repository pattern over various data sources. This pattern is chosen for its clear separation of concerns, ease of maintenance, and scalability.
 - **Security Model**: API key-based authentication for LLM providers; no user authentication for CLI tool
 - **External Integrations**: Git, OpenAI-compatible APIs (Gemini, Anthropic, OpenAI, etc.), LanceDB for vector indexing, tree-sitter for code parsing
+
+## Decisions
+
+### North star is a deterministic structural context substrate for coding agents
+
+**Status:** Approved
+**Date:** 2026-06-01
+**ID:** c6d1ad07
+
+OpenLore is positioned as local-first plumbing (like tree-sitter/SCIP/LSP) that agents build on, not a breadth product; every capability is additive to the coding-agent use case and grounded in static analysis rather than LLM guessing (Spec 13).
+
+**Consequences:** Features must make the coding-agent case more useful or they do not ship; retrieval stays token-scoped and local-first.

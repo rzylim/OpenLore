@@ -7,13 +7,22 @@
 
 ## Progress
 
-Branch: `openlore-spec-15-governance-dogfooding`. Not started.
+Branch: `openlore-spec-15-governance-dogfooding`. **DONE.**
 
-- [ ] Activate the decisions pre-commit gate in OpenLore's own repo
-- [ ] Retroactively record the genuinely-architectural decisions already made
-- [ ] Consolidate, then sync into `openspec/specs/`
-- [ ] Verify the gate blocks/passes correctly on a test commit
-- [ ] Document the dogfood result
+- [x] Activate the decisions pre-commit gate in OpenLore's own repo — `installPreCommitHook`
+      wrote `.git/hooks/pre-commit` + `post-commit` (idempotent, marker-guarded). Provider set to
+      `claude-code` so consolidation runs via the local `claude` CLI (no API key).
+- [x] Retroactively record the genuinely-architectural decisions already made — 6 via the
+      `record_decision` MCP tool (SCIP one-way export; IaC→graph primitives; EdgeStore
+      SCHEMA_VERSION rebuild-on-bump; BM25 zero-network floor; the substrate north star;
+      the spec-14 navigation preset).
+- [x] Consolidate, then sync into `openspec/specs/` — synced to `cli`, `analyzer`, `overview`
+      domains + `openspec/decisions/adr-0001-*.md` (system scope).
+- [x] Verify the gate blocks/passes correctly on a test commit — a real commit was **blocked**
+      (`"gated": true, "reason": "verified"`) while a decision awaited review, then **passed**
+      after approve + sync.
+- [x] Document the dogfood result — `docs/governance-dogfooding.md` (decisions, domains, the
+      block→pass proof, and 3 rough edges the dogfood surfaced).
 
 ---
 

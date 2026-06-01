@@ -187,7 +187,13 @@ result
 docker/
 docker-compose.yml
 ARCHITECTURE.md
-openspec/
+# openspec: the blanket `openspec/` silently ignored the ADR files written by
+# `openlore decisions --sync` (dogfooding, spec 15). Keep ignoring untracked
+# openspec content (already-tracked specs still commit), but un-ignore the
+# decisions/ ADRs so they can be committed.
+openspec/*
+!openspec/config.yaml
+!openspec/decisions/
 .opencode/
 .cursorrules
 .clinerules/openlore.md
