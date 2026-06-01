@@ -46,6 +46,21 @@ jobs:
 
       - run: npm ci
 
+      # Fail fast and loud if the tag doesn't match package.json's version.
+      # Without this, a tag pushed without the matching `chore(release)` bump
+      # sails through validate and dies late in `npm publish` with the cryptic
+      # "cannot publish over the previously published version" (this is exactly
+      # how the first v2.0.6 publish failed). Catch it here with a clear message.
+      - name: Verify tag matches package.json version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Release tag '$TAG' does not match package.json version '$PKG'. Bump package.json + package-lock.json in a chore(release) commit, retag at that commit, and re-run."
+            exit 1
+          fi
+          echo "Tag '$TAG' matches package.json version '$PKG'."
+
       - name: Run linting
         run: npm run lint
 
