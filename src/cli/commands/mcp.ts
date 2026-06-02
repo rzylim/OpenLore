@@ -56,6 +56,7 @@ import {
 } from '../../core/services/mcp-handlers/semantic.js';
 import { handleOrient } from '../../core/services/mcp-handlers/orient.js';
 import { handleSelectTests } from '../../core/services/mcp-handlers/test-impact.js';
+import { handleFindDeadCode } from '../../core/services/mcp-handlers/reachability.js';
 import { handleGenerateChangeProposal, handleAnnotateStory } from '../../core/services/mcp-handlers/change.js';
 import {
   handleRecordDecision,
@@ -468,6 +469,26 @@ export const TOOL_DEFINITIONS = [
           description: 'Git ref to diff the working tree against (e.g. "HEAD", "main"). Provide this OR changedSymbols.',
         },
         maxDepth: { type: 'number', description: 'Backward reachability depth (default 12)' },
+      },
+      required: ['directory'],
+    },
+  },
+  {
+    name: 'find_dead_code',
+    description:
+      'USE THIS WHEN: "what code is unreachable / dead?", "is anything calling X?", or ' +
+      '"what becomes dead if I delete X?". Cross-language mark-and-sweep reachability from roots ' +
+      '(tests, imported symbols, route handlers, main) over the call graph. ' +
+      'Pass ifDeleted to get the downstream-only-reachable set for a symbol. ' +
+      'Results are confidence-tagged CANDIDATES, never deletion authority — dynamic dispatch, DI, ' +
+      'and external consumers cause false positives, stated in the response. Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: 'Absolute path to the project directory' },
+        ifDeleted: { type: 'string', description: 'Symbol name — returns what becomes dead if it is deleted (delete-impact mode)' },
+        maxResults: { type: 'number', description: 'Max candidate-dead results (default 100)' },
+        filePattern: { type: 'string', description: 'Only report candidates whose file path contains this substring' },
       },
       required: ['directory'],
     },
@@ -1292,7 +1313,7 @@ const TOOL_ANNOTATIONS: Record<string, typeof _RO | typeof _RWI | typeof _RW> = 
   orient: _RO, analyze_codebase: _RWI, get_architecture_overview: _RO,
   get_refactor_report: _RO, get_call_graph: _RO, get_duplicate_report: _RO,
   get_signatures: _RO, get_subgraph: _RO, trace_execution_path: _RO,
-  get_mapping: _RO, check_spec_drift: _RO, analyze_impact: _RO, select_tests: _RO,
+  get_mapping: _RO, check_spec_drift: _RO, analyze_impact: _RO, select_tests: _RO, find_dead_code: _RO,
   get_low_risk_refactor_candidates: _RO, get_leaf_functions: _RO,
   get_critical_hubs: _RO, get_function_skeleton: _RO, get_god_functions: _RO,
   suggest_insertion_points: _RO, search_code: _RO, list_spec_domains: _RO,
@@ -1490,6 +1511,10 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
         const { directory, changedSymbols, diffRef, maxDepth } =
           args as { directory: string; changedSymbols?: string[]; diffRef?: string; maxDepth?: number };
         result = await handleSelectTests({ directory, changedSymbols, diffRef, maxDepth });
+      } else if (name === 'find_dead_code') {
+        const { directory, ifDeleted, maxResults, filePattern } =
+          args as { directory: string; ifDeleted?: string; maxResults?: number; filePattern?: string };
+        result = await handleFindDeadCode({ directory, ifDeleted, maxResults, filePattern });
       } else if (name === 'get_low_risk_refactor_candidates') {
         const { directory, limit = 5, filePattern } =
           args as { directory: string; limit?: number; filePattern?: string };

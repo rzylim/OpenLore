@@ -292,6 +292,12 @@ The system SHALL expose a select_tests MCP tool that walks the call graph backwa
 
 > Decision recorded: 0859edf6
 > Date: 2026-06-02
+### Requirement: ExposeMarkandsweepReachabilityAsMcpToolFinddeadcode
+
+The system SHALL expose a find_dead_code MCP tool that performs mark-and-sweep reachability over the call graph and returns confidence-tagged dead-code candidates, with an optional ifDeleted mode for deletion-impact analysis.
+
+> Decision recorded: bee7ef06
+> Date: 2026-06-02
 
 ## Technical Notes
 
@@ -338,3 +344,13 @@ record_decision spawns a detached decisions --consolidate per call; concurrent c
 Enables agents to determine which tests to run after a code change by walking the call graph backward from changed symbols to test files, providing a deterministic offline prioritization without executing tests
 
 **Consequences:** New read-only MCP tool registered; accepts changedSymbols or diffRef as input; explicitly documented as over-approximate prioritizer, not a sound replacement for the full suite; requires analyze_codebase to have been run first
+
+### Expose mark-and-sweep reachability as MCP tool (find_dead_code)
+
+**Status:** Approved
+**Date:** 2026-06-02
+**ID:** bee7ef06
+
+Agents need a deterministic, call-graph-based way to identify unreachable code and assess deletion impact without LLM inference, consistent with the structural-context-substrate north star.
+
+**Consequences:** New read-only MCP tool find_dead_code; results are explicitly confidence-tagged candidates (not deletion authority) due to dynamic dispatch / DI blind spots; requires analyze_codebase to have been run first.

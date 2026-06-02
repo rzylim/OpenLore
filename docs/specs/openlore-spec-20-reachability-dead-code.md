@@ -7,13 +7,25 @@
 
 ## Progress
 
-Branch: `openlore-spec-20-reachability-dead-code`. Not started.
+Branch: `openlore-spec-20-reachability-dead-code`. **DONE** (PR pending).
 
-- [ ] Reachability from declared/detected entry points over the existing graph
-- [ ] Candidate dead-code report (unreachable symbols) with confidence + caveats
-- [ ] "What becomes dead if I delete X?" — downstream-only-reachable set
-- [ ] Cross-language (rides the existing tree-sitter graph), offline, MCP-surfaced
-- [ ] Tests over a fixture with known live/dead regions
+- [x] Reachability from roots over the existing graph — forward BFS over `buildAdjacency`'s
+      forward map. Roots = tests + symbols imported by name + HTTP route handlers + `main`
+      (NOT the analyzer's raw entry-point set, which conflates real roots with dead helpers).
+      [reachability.ts](../../src/core/services/mcp-handlers/reachability.ts).
+- [x] Candidate dead-code report — the unreached remainder, each with confidence + reason.
+      Conservative confidence (bias to false-live): `high` only when static-lang + no caller +
+      not imported by name + **module not imported anywhere**; `low` for dynamic langs or
+      consumed modules. On this repo that cut high candidates ~470 → ~35.
+- [x] "What becomes dead if I delete X?" — recompute reachability with X removed from seeds +
+      graph, diff against baseline (`ifDeleted` param).
+- [x] Cross-language (rides the tree-sitter graph; IaC/external excluded), offline, MCP-surfaced
+      — new read-only `find_dead_code` tool (47 total); no schema change.
+- [x] Tests over a two-language fixture (live chain, dead orphan, dead cluster, Python dynamic,
+      delete-impact diff, dep-graph-absent degradation) —
+      [reachability.test.ts](../../src/core/services/mcp-handlers/reachability.test.ts). Full
+      suite green (3011 passing / 136 files). Doc:
+      [docs/reachability-dead-code.md](../reachability-dead-code.md).
 
 ---
 
