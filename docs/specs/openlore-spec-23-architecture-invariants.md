@@ -8,13 +8,78 @@
 
 ## Progress
 
-Branch: `openlore-spec-23-architecture-invariants`. Not started.
+Branch: `openlore-spec-23-architecture-invariants`. **In progress** — the final spec of the
+13–23 arc. This PR carries the spec-23 feature **plus** a set of pre-flight hotfixes (below).
+
+High-level deliverables:
 
 - [ ] A declarative rule format for dependency/layer constraints (opt-in)
 - [ ] A deterministic checker over the dependency graph
 - [ ] A pre-edit query the agent consults *before* writing a violating import
 - [ ] Continuous violation reporting; rules optionally sourced from recorded decisions
 - [ ] Tests over a fixture with a declared rule and a known violation
+
+### Detailed implementation steps (execution order)
+
+1. **Rule format + types** — `src/core/architecture/rules.ts`: a small declarative schema
+   (`ArchitectureRules`) read from an opt-in `architecture` block in `.openlore/config.json`
+   (or a dedicated `.openlore/architecture.json`). Rule kinds, deterministic only:
+   - `layers`: ordered `Record<layerName, pathPrefix[]>` (key order = allowed dependency
+     direction, top → bottom) — compiles to the existing `detectLayerViolations` input.
+   - `forbidden`: `{ from: pathGlob, to: pathGlob, reason? }` — "files under A must not depend on B".
+   - `allowedOnly` (module boundary): `{ module: pathGlob, mayDependOn: pathGlob[], reason? }`.
+   Parse + validate; unknown/non-existent path prefixes → config warnings, never a throw.
+2. **Checker** — `src/core/architecture/check.ts`:
+   - `scanViolations(depGraph, rules)` → `Violation[]` (reuses `detectLayerViolations` for the
+     `layers` kind; evaluates `forbidden`/`allowedOnly` over the file-level dependency graph).
+   - `canImport(fromFile, toFileOrSymbol, rules, depGraph)` → `{ allowed, rule?, reason? }` for a
+     hypothetical edge (the pre-edit query). Writes nothing; pure + deterministic.
+3. **Decision-sourced rules (optional, Spec 16 tie)** — parse invariants from **synced ADR files**
+   (`openspec/decisions/adr-*.md`) via a structured `Invariant:` marker (NOT from `pending.json`
+   fields — those are purged on sync). Merge any found into the rule set, tagged `source: 'decision'`.
+4. **MCP handler + tool** — `src/core/services/mcp-handlers/architecture.ts` →
+   `handleCheckArchitecture`. New read-only `check_architecture` tool (#50):
+   - pre-edit mode: `{ directory, from, to }` → verdict + governing rule + reason.
+   - scan mode: `{ directory }` → full current-violations report + a soundness/opt-in note.
+   Register in `mcp.ts` (def + dispatch + `_RO` annotation); `toolAnnotations` covers it.
+5. **orient surfacing (additive)** — when rules are declared and the task's relevant files have
+   violations, add an `architectureViolations` caution block (omit entirely when no rules).
+6. **Tests** — `architecture/*.test.ts`: a declared "domain must not import infra" rule flags a
+   known fixture violation; `canImport` answers an allowed vs. disallowed query; **no rules →
+   fully inert** (no output, no behavior change).
+7. **Docs** — `docs/architecture-invariants.md`; README cheat-sheet + feature blurb + tool count
+   → 50; update the Spec 13 roadmap to mark 23 done (closing the arc).
+
+---
+
+## Hotfixes (pre-flight hardening — ship in THIS PR before/with the spec-23 work)
+
+A foundation scan after merging PRs #111–#118 (specs 16–22 + the MCP hardening + laurentftech's
+Kotlin grammar fix) found main fully green (3061 unit + 111 integration tests, lint/typecheck/build
+clean, every Layer-3 tool verified on a fresh analyze). These are the rough edges worth closing now
+so spec-23 builds on a clean base:
+
+- [ ] **HF-1 — Decisions verifier over-marks `phantom`.** The LLM `verify` step
+      ([verifier.ts](../../src/core/decisions/verifier.ts)) classified nearly every legitimate
+      tool-addition decision across specs 16–22 as `phantom` (no evidence), so the dogfood gate
+      almost never produced `verified` decisions and each spec required a manual
+      `--approve`/`--sync`. *Fix:* add a **deterministic verification fallback** — if a decision's
+      `affectedFiles` all appear in the staged diff with substantive hunks, mark it `verified`
+      (confidence `low`) instead of trusting the LLM's `phantom` call. Keeps the dogfood gate
+      self-driving and the ADR log complete. Add a unit test over a fixture diff.
+- [ ] **HF-2 — `find_dead_code` import signal is incomplete.** The dependency graph's
+      `importedNames` captures only named imports, missing `import * as ns`, default imports, and
+      re-exports — so the module-level liveness signal under-counts usage and inflates candidate-dead
+      (708 candidates on this repo, most `low`). *Fix:* capture namespace + default import bindings
+      in [dependency-graph.ts](../../src/core/analyzer/dependency-graph.ts) so a file consumed via
+      `import * as`/default is treated as used. Lower-priority; gate on whether it meaningfully cuts
+      false-dead on the repo fixture.
+- [ ] **HF-3 — Doc/roadmap hygiene.** Mark spec 23 in the [Spec 13 roadmap](openlore-spec-13-context-substrate.md)
+      and reflect the completed 16–23 arc in `openspec/specs/overview/spec.md`; confirm README tool
+      count + docs table are accurate at the end of the PR. (Mechanical; do last.)
+
+> Each hotfix lands as its own commit with a regression test where applicable; HF-2 may be split out
+> if it doesn't pay for itself on the fixture. None block the spec-23 feature.
 
 ---
 
