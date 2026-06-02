@@ -12,7 +12,7 @@ Branch: `chore/post-arc-ci-hardening`. **In progress** — PR pending. CI/test/w
 **no product code change and nothing user-facing**, so this does not warrant a version bump or npm
 publish.
 
-- [ ] **F1** — Bump GitHub Actions off the deprecated Node 20 runtime
+- [x] **F1** — Bump GitHub Actions off the deprecated Node 20 runtime — checkout@v6, setup-node@v6, upload-artifact@v7 in `ci.yml` + `release.yml`
 - [ ] **F2** — Stop `preflight.test.ts` leaking GitHub workflow-command annotations into the CI log
 
 ---
