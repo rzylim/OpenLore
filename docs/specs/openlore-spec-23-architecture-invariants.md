@@ -13,11 +13,11 @@ Branch: `openlore-spec-23-architecture-invariants`. **In progress** — [PR #119
 
 High-level deliverables:
 
-- [ ] A declarative rule format for dependency/layer constraints (opt-in)
-- [ ] A deterministic checker over the dependency graph
-- [ ] A pre-edit query the agent consults *before* writing a violating import
-- [ ] Continuous violation reporting; rules optionally sourced from recorded decisions
-- [ ] Tests over a fixture with a declared rule and a known violation
+- [x] A declarative rule format for dependency/layer constraints (opt-in) — `architecture/rules.ts`
+- [x] A deterministic checker over the dependency graph — `architecture/check.ts` (`scanViolations`)
+- [x] A pre-edit query the agent consults *before* writing a violating import — `canImport` / `check_architecture` tool #50
+- [x] Continuous violation reporting; rules optionally sourced from recorded decisions (synced ADR `Invariant:` markers)
+- [x] Tests over a fixture with a declared rule and a known violation — 20 unit tests green
 
 ### Detailed implementation steps (execution order)
 
