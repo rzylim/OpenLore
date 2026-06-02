@@ -8,7 +8,7 @@
 
 ## Progress
 
-Branch: `openlore-spec-16-decisions-as-graph-nodes`. **DONE** (PR pending).
+Branch: `openlore-spec-16-decisions-as-graph-nodes`. **DONE** — [PR #111](https://github.com/clay-good/OpenLore/pull/111).
 
 - [x] Add a decision node type and an `affects` edge kind — `DecisionNode` /
       `DecisionAffectsEdge` in [src/core/decisions/project.ts](../../src/core/decisions/project.ts);
