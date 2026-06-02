@@ -21,6 +21,8 @@ import { readOpenLoreConfig } from '../config-manager.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
 import type { RagManifest } from '../../generator/rag-manifest-generator.js';
 import { OPENSPEC_DIR, ARTIFACT_RAG_MANIFEST } from '../../../constants.js';
+import { loadArchitectureRules } from '../../architecture/rules.js';
+import { scanViolations } from '../../architecture/check.js';
 import {
   classifyRole,
   deriveStrategy,
@@ -470,9 +472,40 @@ export async function handleOrient(
     // non-fatal — change coupling is additive and local-only
   }
 
+  // ── Architecture invariants (spec-23, additive) ─────────────────────────────
+  // Only when the repo declares rules AND a relevant file participates in a
+  // violation. Fully omitted otherwise — inert by default.
+  let architectureViolations: Array<{ from: string; to: string; kind: string; reason: string }> | undefined;
+  try {
+    const rules = await loadArchitectureRules(absDir);
+    if (rules.rules.length > 0 && relevantFiles.length > 0) {
+      const depRaw = await readFile(join(outputDir, 'dependency-graph.json'), 'utf-8').catch(() => null);
+      if (depRaw) {
+        const depGraph = JSON.parse(depRaw);
+        const norm = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '');
+        const rels = relevantFiles.map(norm);
+        const involvesRelevant = (vf: string) => {
+          const b = norm(vf);
+          return rels.some(a => a === b || a.endsWith('/' + b) || b.endsWith('/' + a));
+        };
+        const scoped = scanViolations(depGraph, rules).violations.filter(
+          v => involvesRelevant(v.from) || involvesRelevant(v.to),
+        );
+        if (scoped.length > 0) {
+          architectureViolations = scoped.slice(0, 10).map(v => ({
+            from: v.from, to: v.to, kind: v.kind, reason: v.reason,
+          }));
+        }
+      }
+    }
+  } catch {
+    // non-fatal — architecture guardrail is additive and opt-in
+  }
+
   // ── Suggested tools (portable discovery for non-Claude Code clients) ─────
   // Derived from what orient already knows — no extra I/O.
   const _suggested: string[] = ['record_decision'];
+  if (architectureViolations !== undefined) _suggested.push('check_architecture');
   if (relevantFunctions.some(f => f.isHub)) _suggested.push('analyze_impact');
   if (insertionPoints.length > 0) _suggested.push('get_subgraph');
   if (specDomains.length > 0) _suggested.push('get_spec');
@@ -531,6 +564,7 @@ export async function handleOrient(
     ...(governingDecisions !== undefined ? { governingDecisions } : {}),
     ...(provenance !== undefined ? { provenance } : {}),
     ...(changeCoupling !== undefined ? { changeCoupling } : {}),
+    ...(architectureViolations !== undefined ? { architectureViolations } : {}),
     suggestedTools,
     nextSteps,
   };

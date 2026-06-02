@@ -69,6 +69,7 @@ import { handleSelectTests } from '../../core/services/mcp-handlers/test-impact.
 import { handleFindDeadCode } from '../../core/services/mcp-handlers/reachability.js';
 import { handleStructuralDiff } from '../../core/services/mcp-handlers/structural-diff.js';
 import { handleGetChangeCoupling } from '../../core/services/mcp-handlers/change-coupling.js';
+import { handleCheckArchitecture } from '../../core/services/mcp-handlers/architecture.js';
 import { handleGenerateChangeProposal, handleAnnotateStory } from '../../core/services/mcp-handlers/change.js';
 import {
   handleRecordDecision,
@@ -540,6 +541,26 @@ export const TOOL_DEFINITIONS = [
         directory: { type: 'string', description: 'Absolute path to the project directory' },
         file: { type: 'string', description: 'A file to query its coupling/volatility. Omit for the most-volatile overview.' },
         limit: { type: 'number', description: 'Cap results (default 20)' },
+      },
+      required: ['directory'],
+    },
+  },
+  {
+    name: 'check_architecture',
+    description:
+      'USE THIS BEFORE adding an import to check it against the repo\'s architecture rules, or to ' +
+      'list current architecture violations. Opt-in and inert unless the repo declares rules in ' +
+      '.openlore/architecture.json (layers / forbidden / allowedOnly) or via an "Invariant:" marker ' +
+      'in a synced ADR. Pre-edit mode: pass {from, to} ("may a file under <from> import <to>?") for a ' +
+      'deterministic allowed/denied + the governing rule + why, BEFORE you write the code. Scan mode: ' +
+      'pass only {directory} for the full current-violations report. Cross-language, offline, ' +
+      'deterministic; complements (does not replace) CI linters. Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: 'Absolute path to the project directory' },
+        from: { type: 'string', description: 'Pre-edit mode: the file that would gain the import (relative or absolute). Requires "to".' },
+        to: { type: 'string', description: 'Pre-edit mode: the target file path or exported symbol being imported. Requires "from".' },
       },
       required: ['directory'],
     },
@@ -1364,7 +1385,7 @@ const TOOL_ANNOTATIONS: Record<string, typeof _RO | typeof _RWI | typeof _RW> = 
   orient: _RO, analyze_codebase: _RWI, get_architecture_overview: _RO,
   get_refactor_report: _RO, get_call_graph: _RO, get_duplicate_report: _RO,
   get_signatures: _RO, get_subgraph: _RO, trace_execution_path: _RO,
-  get_mapping: _RO, check_spec_drift: _RO, analyze_impact: _RO, select_tests: _RO, find_dead_code: _RO, structural_diff: _RO, get_change_coupling: _RO,
+  get_mapping: _RO, check_spec_drift: _RO, analyze_impact: _RO, select_tests: _RO, find_dead_code: _RO, structural_diff: _RO, get_change_coupling: _RO, check_architecture: _RO,
   get_low_risk_refactor_candidates: _RO, get_leaf_functions: _RO,
   get_critical_hubs: _RO, get_function_skeleton: _RO, get_god_functions: _RO,
   suggest_insertion_points: _RO, search_code: _RO, list_spec_domains: _RO,
@@ -1616,6 +1637,9 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
       } else if (name === 'get_change_coupling') {
         const { directory, file, limit } = args as { directory: string; file?: string; limit?: number };
         result = await handleGetChangeCoupling({ directory, file, limit });
+      } else if (name === 'check_architecture') {
+        const { directory, from, to } = args as { directory: string; from?: string; to?: string };
+        result = await handleCheckArchitecture({ directory, from, to });
       } else if (name === 'get_low_risk_refactor_candidates') {
         const { directory, limit = 5, filePattern } =
           args as { directory: string; limit?: number; filePattern?: string };

@@ -91,6 +91,45 @@ function buildTargetedDiff(
   return fallbackDiff.slice(0, 4_000);
 }
 
+/** A changed hunk is "substantive" once it carries at least this many +/- lines. */
+const SUBSTANTIVE_MIN_CHANGED_LINES = 2;
+
+/** Count real added/removed lines in a diff hunk (excluding the +++/--- file markers). */
+function countChangedLines(hunk: string): number {
+  let n = 0;
+  for (const line of hunk.split('\n')) {
+    if ((line.startsWith('+') && !line.startsWith('+++')) ||
+        (line.startsWith('-') && !line.startsWith('---'))) {
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * Deterministic verification evidence: a decision is grounded when EVERY one of its
+ * affectedFiles appears in the diff with a substantive hunk. Returns the evidence
+ * file (the first affected file) when grounded, else null.
+ *
+ * This is the HF-1 fallback: the LLM `verify` step over-marks legitimate
+ * tool-addition decisions as `phantom`, stalling the dogfood gate. When the code
+ * is demonstrably in the diff, trust the diff over the LLM's "no evidence" call.
+ */
+export function substantiveEvidence(
+  decision: PendingDecision,
+  diffByFile: Map<string, string>,
+): string | null {
+  if (decision.affectedFiles.length === 0) return null;
+  let totalChanged = 0;
+  for (const file of decision.affectedFiles) {
+    const normalised = file.replace(/^[ab]\//, '');
+    const hunk = diffByFile.get(normalised);
+    if (!hunk) return null; // require ALL affected files present
+    totalChanged += countChangedLines(hunk);
+  }
+  return totalChanged >= SUBSTANTIVE_MIN_CHANGED_LINES ? decision.affectedFiles[0] : null;
+}
+
 export async function verifyDecisions(
   decisions: PendingDecision[],
   diff: string,
@@ -134,12 +173,19 @@ export async function verifyDecisions(
       return [{ ...d, status: 'verified' as const, confidence: v.confidence, evidenceFile: v.evidenceFile, verifiedAt: now }];
     });
 
-  const phantom: PendingDecision[] = result.phantom
-    .flatMap((p) => {
-      const d = byId.get(p.id);
-      if (!d) return [];
-      return [{ ...d, status: 'phantom' as const, confidence: 'low' as const, verifiedAt: now }];
-    });
+  // HF-1: rescue any LLM-marked phantom whose affected files are all present in the
+  // diff with substantive hunks — trust the diff over the LLM's "no evidence" call.
+  const phantom: PendingDecision[] = [];
+  for (const p of result.phantom) {
+    const d = byId.get(p.id);
+    if (!d) continue;
+    const evidenceFile = substantiveEvidence(d, diffByFile);
+    if (evidenceFile) {
+      verified.push({ ...d, status: 'verified', confidence: 'low', evidenceFile, verifiedAt: now });
+    } else {
+      phantom.push({ ...d, status: 'phantom', confidence: 'low', verifiedAt: now });
+    }
+  }
 
   return { verified, phantom, missing: result.missing };
 }

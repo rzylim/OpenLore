@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { verifyDecisions } from './verifier.js';
+import { verifyDecisions, substantiveEvidence } from './verifier.js';
 import type { PendingDecision } from '../../types/index.js';
 import type { LLMService } from '../services/llm-service.js';
 
@@ -197,5 +197,61 @@ describe('verifyDecisions — file-targeted diff', () => {
     await verifyDecisions([makeDecision()], MULTI_FILE_DIFF, llm);
     const prompt = vi.mocked(llm.complete).mock.calls[0][0].userPrompt as string;
     expect(prompt).not.toContain('Commit messages:');
+  });
+});
+
+// ============================================================================
+// HF-1: deterministic phantom-rescue fallback
+// ============================================================================
+
+// A substantive hunk for src/cache.ts: 2+ changed (+/-) lines.
+const SUBSTANTIVE_CACHE_DIFF =
+  'diff --git a/src/cache.ts b/src/cache.ts\n' +
+  'index 0000000..1111111 100644\n--- a/src/cache.ts\n+++ b/src/cache.ts\n' +
+  '@@ -1,2 +1,4 @@\n+import Redis from "ioredis";\n+export const client = new Redis();\n-const old = 1;\n export default {};';
+
+describe('substantiveEvidence', () => {
+  it('returns the evidence file when all affected files have substantive hunks', () => {
+    const map = new Map([['src/cache.ts', SUBSTANTIVE_CACHE_DIFF]]);
+    expect(substantiveEvidence(makeDecision({ affectedFiles: ['src/cache.ts'] }), map)).toBe('src/cache.ts');
+  });
+
+  it('returns null when an affected file is absent from the diff', () => {
+    const map = new Map([['src/cache.ts', SUBSTANTIVE_CACHE_DIFF]]);
+    expect(substantiveEvidence(makeDecision({ affectedFiles: ['src/cache.ts', 'src/other.ts'] }), map)).toBeNull();
+  });
+
+  it('returns null when the hunk is below the substantive threshold', () => {
+    const trivial = new Map([['src/cache.ts', 'diff --git a/src/cache.ts b/src/cache.ts\n+++ b/src/cache.ts\n+x']]);
+    expect(substantiveEvidence(makeDecision({ affectedFiles: ['src/cache.ts'] }), trivial)).toBeNull();
+  });
+
+  it('returns null when there are no affected files', () => {
+    expect(substantiveEvidence(makeDecision({ affectedFiles: [] }), new Map())).toBeNull();
+  });
+});
+
+describe('verifyDecisions — HF-1 phantom rescue', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('rescues an LLM-marked phantom whose affected files are demonstrably in the diff', async () => {
+    const response = JSON.stringify({ verified: [], phantom: [{ id: 'aaaa0001' }], missing: [] });
+    const llm = makeLLM(response);
+    const d = makeDecision({ affectedFiles: ['src/cache.ts'] });
+    const result = await verifyDecisions([d], SUBSTANTIVE_CACHE_DIFF, llm);
+    expect(result.phantom).toHaveLength(0);
+    expect(result.verified).toHaveLength(1);
+    expect(result.verified[0].status).toBe('verified');
+    expect(result.verified[0].confidence).toBe('low');
+    expect(result.verified[0].evidenceFile).toBe('src/cache.ts');
+  });
+
+  it('leaves a phantom as phantom when its files are not in the diff', async () => {
+    const response = JSON.stringify({ verified: [], phantom: [{ id: 'aaaa0001' }], missing: [] });
+    const llm = makeLLM(response);
+    const d = makeDecision({ affectedFiles: ['src/cache.ts'] });
+    const result = await verifyDecisions([d], MULTI_FILE_DIFF.replace(/cache/g, 'nope'), llm);
+    expect(result.verified).toHaveLength(0);
+    expect(result.phantom).toHaveLength(1);
   });
 });

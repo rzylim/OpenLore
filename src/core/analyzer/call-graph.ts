@@ -125,6 +125,41 @@ export interface LayerViolation {
 }
 
 /**
+ * The layer a file belongs to, by the first matching prefix in declared order.
+ * Shared by the call-graph layer detector and the architecture guardrail (spec-23)
+ * so both agree on one layering convention.
+ */
+export function layerOf(filePath: string, layers: Record<string, string[]>): string | undefined {
+  for (const [layerName, prefixes] of Object.entries(layers)) {
+    if (prefixes.some(p => filePath.includes(p))) return layerName;
+  }
+  return undefined;
+}
+
+/**
+ * Classify a single directed edge (from → to) against a layer ordering. Declared
+ * key order is top → bottom; a lower layer depending on an upper layer is a
+ * violation. Returns the offending layer pair, or null when the edge is legal,
+ * unclassified, or intra-layer. The canonical layer-direction primitive — reused
+ * by `detectLayerViolations` (call edges) and the spec-23 architecture checker
+ * (file dependency edges).
+ */
+export function classifyLayerEdge(
+  fromFile: string,
+  toFile: string,
+  layers: Record<string, string[]>
+): { fromLayer: string; toLayer: string } | null {
+  const order = Object.keys(layers);
+  const fromLayer = layerOf(fromFile, layers);
+  const toLayer = layerOf(toFile, layers);
+  if (!fromLayer || !toLayer || fromLayer === toLayer) return null;
+  const fi = order.indexOf(fromLayer);
+  const ti = order.indexOf(toLayer);
+  if (fi === -1 || ti === -1) return null;
+  return fi > ti ? { fromLayer, toLayer } : null;
+}
+
+/**
  * A class or interface as a structural unit, grouping its methods.
  * Derived from FunctionNode.className after the call graph is built.
  */
@@ -2963,39 +2998,22 @@ export class CallGraphBuilder {
     nodes: Map<string, FunctionNode>,
     layers: Record<string, string[]>
   ): LayerViolation[] {
-    // Build ordered layer list (index 0 = top layer, higher index = lower layer)
-    const layerOrder = Object.keys(layers);
-
-    const getLayer = (filePath: string): string | undefined => {
-      for (const [layerName, prefixes] of Object.entries(layers)) {
-        if (prefixes.some(p => filePath.includes(p))) return layerName;
-      }
-      return undefined;
-    };
-
     const violations: LayerViolation[] = [];
     for (const edge of edges) {
       const caller = nodes.get(edge.callerId);
       const callee = nodes.get(edge.calleeId);
       if (!caller || !callee) continue;
 
-      const callerLayer = getLayer(caller.filePath);
-      const calleeLayer = getLayer(callee.filePath);
-      if (!callerLayer || !calleeLayer || callerLayer === calleeLayer) continue;
-
-      const callerIdx = layerOrder.indexOf(callerLayer);
-      const calleeIdx = layerOrder.indexOf(calleeLayer);
-      if (callerIdx === -1 || calleeIdx === -1) continue;
-      if (callerIdx > calleeIdx) {
-        // Lower layer calling upper layer — violation
-        violations.push({
-          callerId: edge.callerId,
-          calleeId: edge.calleeId,
-          callerLayer,
-          calleeLayer,
-          reason: `${callerLayer} calls ${calleeLayer} (${caller.name} → ${callee.name})`,
-        });
-      }
+      // Lower layer calling upper layer — violation (canonical primitive).
+      const cls = classifyLayerEdge(caller.filePath, callee.filePath, layers);
+      if (!cls) continue;
+      violations.push({
+        callerId: edge.callerId,
+        calleeId: edge.calleeId,
+        callerLayer: cls.fromLayer,
+        calleeLayer: cls.toLayer,
+        reason: `${cls.fromLayer} calls ${cls.toLayer} (${caller.name} → ${callee.name})`,
+      });
     }
 
     return violations;
