@@ -7,12 +7,22 @@
 
 ## Progress
 
-Branch: `openlore-spec-21-structural-change-analysis`. Not started.
+Branch: `openlore-spec-21-structural-change-analysis`. **DONE** (PR pending).
 
-- [ ] Graph delta between two states (working tree vs HEAD, or two refs)
-- [ ] Report: nodes/edges added & removed, signature changes, newly-stale callers
-- [ ] Surfaced through the MCP layer for review/refactor agents
-- [ ] Deterministic given two fixed states; tests over a fixture change
+- [x] Graph delta between two states — `structural_diff` builds two in-memory snapshots from just
+      the changed files (old via `git show <base>:<file>`, new via working tree / `headRef`),
+      including untracked new files; the canonical graph is never mutated.
+      [structural-diff.ts](../../src/core/services/mcp-handlers/structural-diff.ts).
+- [x] Report: functions + edges added/removed, signature changes (before→after), and **stale
+      callers** — callers in the canonical graph (`getCallers`, depth-1 backward) of a
+      signature-changed/removed callee that are NOT part of this change. Rename/move candidates
+      (matching signature shape) flagged, reported as both remove+add and a rename — never guessed.
+- [x] Surfaced through the MCP layer — new read-only `structural_diff` tool (48 total); aimed at
+      review/refactor flows; no schema change.
+- [x] Deterministic for two fixed states; tests over a real temp git repo v1→v2 change
+      (added/removed/signature-changed, stale callers, rename candidate, untracked file, no-cache
+      degradation) — [structural-diff.test.ts](../../src/core/services/mcp-handlers/structural-diff.test.ts).
+      Full suite green (3018 passing / 137 files). Doc: [docs/structural-diff.md](../structural-diff.md).
 
 ---
 

@@ -204,7 +204,7 @@ task       string   Natural-language description of the task, e.g. "add rate lim
 limit      number   Max relevant functions to return (default: 5, max: 20)
 ```
 
-Response includes `suggestedTools: string[]` — a ranked list of openlore tool names relevant to the task, derived from hub presence, spec domains, and task keywords. No extra I/O. Use this on clients without Tool Search (Cline, Cursor, OpenCode) to know which tools to call next without enumerating all 47.
+Response includes `suggestedTools: string[]` — a ranked list of openlore tool names relevant to the task, derived from hub presence, spec domains, and task keywords. No extra I/O. Use this on clients without Tool Search (Cline, Cursor, OpenCode) to know which tools to call next without enumerating all 48.
 
 **`analyze_codebase`**
 ```

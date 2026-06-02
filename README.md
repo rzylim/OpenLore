@@ -33,7 +33,7 @@ Three layers, each usable independently:
 |-------|-------------|----------|
 | **1. Static Analysis** | Call graph, clusters, McCabe CC, external deps → `CODEBASE.md` digest | No |
 | **2. Spec Layer** | LLM-generated living specs, ADRs, drift detection, decision gates | For generation |
-| **3. Agent Runtime** | 47 MCP tools — `orient()`, semantic search, graph expansion | No |
+| **3. Agent Runtime** | 48 MCP tools — `orient()`, semantic search, graph expansion | No |
 
 You can use layer 1 alone to give agents structural context. Add layer 2 for semantic intent and architectural governance through OpenSpec-compatible living specifications. Layer 3 keeps that context continuously accessible through graph-native MCP tools once `openlore mcp` is running.
 
@@ -175,7 +175,7 @@ One graph query replaces most exploratory file reads. The agent knows exactly wh
 
 ## Agent Cheat Sheet
 
-The full surface is 47 tools, but day-to-day work needs a handful. Reach for the right one by situation:
+The full surface is 48 tools, but day-to-day work needs a handful. Reach for the right one by situation:
 
 | Situation | Tool |
 |-----------|------|
@@ -188,6 +188,7 @@ The full surface is 47 tools, but day-to-day work needs a handful. Reach for the
 | "How does request X reach function Y?" | `trace_execution_path` |
 | "I changed X — which tests should I run?" | `select_tests` — backward reachability to the reaching tests + paths (Spec 19) |
 | "What's dead / what dies if I delete X?" | `find_dead_code` — cross-language reachability, confidence-tagged candidates (Spec 20) |
+| "What changed structurally / whose callers are now stale?" | `structural_diff` — graph diff, stale callers, rename flags (Spec 21) |
 | Recording an architectural choice | `record_decision` **before** writing the code |
 | Reading / checking a spec | `get_spec` · `search_specs` · `check_spec_drift` |
 | Ranking what changed by risk | `detect_changes` |
@@ -238,7 +239,7 @@ Compares git changes against spec mappings in milliseconds. Detects: Gap (code c
 
 **MCP** (no API key)
 
-47 graph-native tools exposed over stdio. Together they act as a persistent architectural runtime for coding agents: orientation, graph traversal, semantic retrieval, drift awareness, decision context, and structural risk analysis.
+48 graph-native tools exposed over stdio. Together they act as a persistent architectural runtime for coding agents: orientation, graph traversal, semantic retrieval, drift awareness, decision context, and structural risk analysis.
 `orient()` is the main entry point — one call replaces 10+ file reads. `detect_changes` risk-scores changed functions using call graph centrality × change type multiplier. See [docs/mcp-tools.md](docs/mcp-tools.md).
 
 `orient()` runs in **~430µs p50** against a 15k-node codebase (TypeScript compiler, ~79k edges). Full benchmark results: [scripts/BENCHMARKS.md](scripts/BENCHMARKS.md).
@@ -250,6 +251,10 @@ Compares git changes against spec mappings in milliseconds. Detects: Gap (code c
 **Reachability & dead-code** (no API key, Spec 20)
 
 `find_dead_code` runs cross-language mark-and-sweep over the call graph: reachability from roots (tests, imported symbols, route handlers, `main`), candidate-dead = the unreached remainder, and "what becomes dead if I delete X?" = the set reachable only through X. Prior art (knip, ts-prune) is TS/JS-only; this rides the unified tree-sitter graph across 15+ languages. Results are **confidence-tagged candidates, never deletion authority** — dynamic dispatch, DI, framework routing, and externally-consumed exports cause false positives, stated in the response. A conservative module-level liveness signal keeps high-confidence candidates trustworthy (it cut them from ~470 to ~35 on a real repo). See [docs/reachability-dead-code.md](docs/reachability-dead-code.md).
+
+**Structural change analysis** (no API key, Spec 21)
+
+`structural_diff` is a graph diff — the structural complement to `git diff`. Between two states (working tree vs a ref, or two refs) it reports functions and edges added/removed, signature changes, and the existing callers in *other* files now **stale** because a callee's signature moved under them. A review/refactor agent gets "this removed `gamma`, changed `alpha`'s signature, and 5 of its callers are now stale" instead of "these 40 lines changed". Only the changed files are re-parsed (old via `git show`, new via the working tree), so it is cheap and never mutates the canonical graph; rename/move ambiguity is flagged, not guessed. See [docs/structural-diff.md](docs/structural-diff.md).
 
 **Epistemic Lease** (no API key)
 
@@ -330,7 +335,7 @@ flowchart TD
     Iac --> DB
     Dec --> DB
 
-    DB --> MCP[47 MCP tools<br/>orient · BFS · search · analyze_impact]
+    DB --> MCP[48 MCP tools<br/>orient · BFS · search · analyze_impact]
     MCP --> Agent((Coding Agent))
 
     Code -. optional, API key .-> Gen[openlore generate]
@@ -367,7 +372,7 @@ OpenLore dogfoods its own decision system. These ADRs were recorded with `record
 | **EdgeStore uses SCHEMA_VERSION rebuild-on-bump, not migrations** | The graph is fully derivable from source, so a schema change drops and rebuilds — no migration code, no drift | `analyzer` spec · `src/core/services/edge-store.ts` |
 | **BM25 keyword retrieval is the zero-network floor** | `orient`/`search_code` work with no API key or embedding server; dense embeddings are an optional upgrade, never a requirement | `analyzer` spec · Spec 06 |
 | **SCIP is a one-way export, not a round-trip format** | The SQLite graph stays canonical; SCIP exports only the subset it can model, avoiding a lossy bidirectional contract | `cli` spec · `src/cli/export/scip.ts` |
-| **MCP exposes a curated `navigation` preset, not all 47 tools** | A lean graph-traversal surface is what wins the Spec 14 agent benchmark; the full set stays available opt-in | `cli` spec · Spec 14 |
+| **MCP exposes a curated `navigation` preset, not all 48 tools** | A lean graph-traversal surface is what wins the Spec 14 agent benchmark; the full set stays available opt-in | `cli` spec · Spec 14 |
 | **Decision consolidation is serialized with a cross-process file lock** | Concurrent `record_decision` calls were losing drafts; a lock makes consolidation safe and every commit instant | `cli` spec · Spec 15 |
 
 This table is not aspirational documentation — it is the live decision log the pre-commit gate enforces and Spec 16 makes queryable. See [docs/governance-dogfooding.md](docs/governance-dogfooding.md).
@@ -404,7 +409,7 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
 
 | Topic | Doc |
 |-------|-----|
-| MCP tools reference (47 tools + parameters) | [docs/mcp-tools.md](docs/mcp-tools.md) |
+| MCP tools reference (48 tools + parameters) | [docs/mcp-tools.md](docs/mcp-tools.md) |
 | Agent setup (Claude Code, Cline, OpenCode, Vibe…) | [docs/agent-setup.md](docs/agent-setup.md) |
 | `openlore install` — auto-configure agent surfaces | [docs/install.md](docs/install.md) |
 | LLM providers + embedding config | [docs/providers.md](docs/providers.md) |
@@ -417,6 +422,7 @@ The manifest captures the public API surface, HTTP routes, stats, dependencies, 
 | Local provenance (git/PR, no OAuth) | [docs/provenance.md](docs/provenance.md) |
 | Test impact selection (which tests to run) | [docs/test-impact-selection.md](docs/test-impact-selection.md) |
 | Reachability & dead-code analysis | [docs/reachability-dead-code.md](docs/reachability-dead-code.md) |
+| Structural change analysis (graph diff) | [docs/structural-diff.md](docs/structural-diff.md) |
 | Federation manifest (cross-repo) | [docs/federation.md](docs/federation.md) |
 | CLI command reference | [docs/cli-reference.md](docs/cli-reference.md) |
 | Interactive graph viewer | [docs/viewer.md](docs/viewer.md) |

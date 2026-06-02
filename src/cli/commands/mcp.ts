@@ -57,6 +57,7 @@ import {
 import { handleOrient } from '../../core/services/mcp-handlers/orient.js';
 import { handleSelectTests } from '../../core/services/mcp-handlers/test-impact.js';
 import { handleFindDeadCode } from '../../core/services/mcp-handlers/reachability.js';
+import { handleStructuralDiff } from '../../core/services/mcp-handlers/structural-diff.js';
 import { handleGenerateChangeProposal, handleAnnotateStory } from '../../core/services/mcp-handlers/change.js';
 import {
   handleRecordDecision,
@@ -489,6 +490,26 @@ export const TOOL_DEFINITIONS = [
         ifDeleted: { type: 'string', description: 'Symbol name — returns what becomes dead if it is deleted (delete-impact mode)' },
         maxResults: { type: 'number', description: 'Max candidate-dead results (default 100)' },
         filePattern: { type: 'string', description: 'Only report candidates whose file path contains this substring' },
+      },
+      required: ['directory'],
+    },
+  },
+  {
+    name: 'structural_diff',
+    description:
+      'USE THIS WHEN reviewing or refactoring a change: "what changed structurally?", ' +
+      '"whose callers are now stale?". A graph diff (complement to git diff) between two states ' +
+      '(working tree vs a ref, or two refs): functions/edges added & removed, signature changes, ' +
+      'and the existing callers now STALE because a callee signature moved under them. ' +
+      'Rename/move ambiguity is flagged, not guessed. Deterministic, offline. Run analyze_codebase ' +
+      'first for stale-caller analysis.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: 'Absolute path to the project directory' },
+        baseRef: { type: 'string', description: 'Old state to diff against (default "HEAD")' },
+        headRef: { type: 'string', description: 'New state (a git ref). Omit to use the working tree.' },
+        maxResults: { type: 'number', description: 'Cap reported items per category (default 200)' },
       },
       required: ['directory'],
     },
@@ -1313,7 +1334,7 @@ const TOOL_ANNOTATIONS: Record<string, typeof _RO | typeof _RWI | typeof _RW> = 
   orient: _RO, analyze_codebase: _RWI, get_architecture_overview: _RO,
   get_refactor_report: _RO, get_call_graph: _RO, get_duplicate_report: _RO,
   get_signatures: _RO, get_subgraph: _RO, trace_execution_path: _RO,
-  get_mapping: _RO, check_spec_drift: _RO, analyze_impact: _RO, select_tests: _RO, find_dead_code: _RO,
+  get_mapping: _RO, check_spec_drift: _RO, analyze_impact: _RO, select_tests: _RO, find_dead_code: _RO, structural_diff: _RO,
   get_low_risk_refactor_candidates: _RO, get_leaf_functions: _RO,
   get_critical_hubs: _RO, get_function_skeleton: _RO, get_god_functions: _RO,
   suggest_insertion_points: _RO, search_code: _RO, list_spec_domains: _RO,
@@ -1515,6 +1536,10 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
         const { directory, ifDeleted, maxResults, filePattern } =
           args as { directory: string; ifDeleted?: string; maxResults?: number; filePattern?: string };
         result = await handleFindDeadCode({ directory, ifDeleted, maxResults, filePattern });
+      } else if (name === 'structural_diff') {
+        const { directory, baseRef, headRef, maxResults } =
+          args as { directory: string; baseRef?: string; headRef?: string; maxResults?: number };
+        result = await handleStructuralDiff({ directory, baseRef, headRef, maxResults });
       } else if (name === 'get_low_risk_refactor_candidates') {
         const { directory, limit = 5, filePattern } =
           args as { directory: string; limit?: number; filePattern?: string };
