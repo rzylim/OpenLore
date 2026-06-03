@@ -23,6 +23,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     access: vi.fn().mockResolvedValue(undefined),
     stat: vi.fn().mockResolvedValue({ mtime: new Date() }),
+    // checkMcpWiring reads .claude/settings.json + .mcp.json; default to "absent"
+    // so the suite is independent of the repo's own dogfood files.
+    readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
   };
 });
 
@@ -487,6 +490,52 @@ describe('doctor command', () => {
       const diskCheck = checks.find(c => c.name === 'Disk space')!;
       expect(diskCheck.status).toBe('ok');
       expect(diskCheck.detail).toContain('MB available');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  describe('MCP wiring check', () => {
+    /** Make readFile return given JSON for matching relative paths, ENOENT otherwise. */
+    async function mockMcpFiles(files: Record<string, unknown>): Promise<void> {
+      const { readFile } = await import('node:fs/promises');
+      vi.mocked(readFile).mockImplementation(((p: any) => {
+        const path = String(p);
+        for (const [rel, content] of Object.entries(files)) {
+          if (path.endsWith(rel)) return Promise.resolve(JSON.stringify(content));
+        }
+        return Promise.reject(new Error('ENOENT'));
+      }) as never);
+    }
+
+    const OPENLORE_SERVER = { mcpServers: { openlore: { command: 'npx', args: ['--yes', 'openlore', 'mcp'] } } };
+
+    it('is omitted when no MCP wiring is present', async () => {
+      const checks = await runDoctorJson();
+      expect(checks.find(c => c.name === 'MCP wiring')).toBeUndefined();
+    });
+
+    it('warns when the server lives only in .claude/settings.json', async () => {
+      await mockMcpFiles({ '.claude/settings.json': OPENLORE_SERVER });
+      const checks = await runDoctorJson();
+      const mcp = checks.find(c => c.name === 'MCP wiring')!;
+      expect(mcp.status).toBe('warn');
+      expect(mcp.detail).toContain('settings.json');
+      expect(mcp.fix).toContain('--force');
+    });
+
+    it('passes when the server lives in .mcp.json', async () => {
+      await mockMcpFiles({ '.mcp.json': OPENLORE_SERVER });
+      const checks = await runDoctorJson();
+      const mcp = checks.find(c => c.name === 'MCP wiring')!;
+      expect(mcp.status).toBe('ok');
+    });
+
+    it('warns about a stale settings.json entry when both files have it', async () => {
+      await mockMcpFiles({ '.claude/settings.json': OPENLORE_SERVER, '.mcp.json': OPENLORE_SERVER });
+      const checks = await runDoctorJson();
+      const mcp = checks.find(c => c.name === 'MCP wiring')!;
+      expect(mcp.status).toBe('warn');
+      expect(mcp.detail).toContain('stale');
     });
   });
 });

@@ -11,11 +11,15 @@
 
 ## Progress
 
-Branch: `chore/post-arc-ci-hardening` → [PR #120](https://github.com/clay-good/OpenLore/pull/120).
+Branch: `chore/post-arc-ci-hardening` → [PR #120](https://github.com/clay-good/OpenLore/pull/120) (the plan).
 This document is the **plan**; implementation lands in follow-up commits/PRs per the wave sequence in
-§4. Status: **analysis complete, implementation pending.**
+§4. Status: **Wave 0 shipped; Waves 1–4 pending.**
 
-- [ ] Wave 0 — Fix MCP registration (the headline bug)
+- [x] **Wave 0** — Fix MCP registration (the headline bug). B1: `openlore install --agent claude-code`
+  now writes `mcpServers.openlore` to **`.mcp.json`** (the file Claude Code actually reads) and keeps
+  only the SessionStart hook in `.claude/settings.json`; re-running migrates a legacy
+  `settings.json` entry away. Added a `doctor` **MCP wiring** check that warns when the server is in
+  the wrong file (with the exact `--force` fix). [PR #121](https://github.com/clay-good/OpenLore/pull/121).
 - [ ] Wave 1 — Consolidated `doctor` pass
 - [ ] Wave 2 — Detection correctness (spec dir, agent/project, node version)
 - [ ] Wave 3 — Freshness ownership (drop redundant hook, auto-rebuild on reset)

@@ -6,7 +6,7 @@
  */
 
 import { Command } from 'commander';
-import { access, stat } from 'node:fs/promises';
+import { access, stat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -154,6 +154,52 @@ async function checkOpenSpecDir(rootPath: string): Promise<CheckResult> {
       fix: "Run 'openlore init' then 'openlore generate'",
     };
   }
+}
+
+/**
+ * Claude Code loads MCP servers only from `.mcp.json` (project scope), never
+ * from `.claude/settings.json`. A stale `mcpServers.openlore` in settings.json
+ * (written by OpenLore <= 2.0.8) means the server silently never loads. Catch
+ * that wrong-file wiring and point at the one-line fix. Returns null when there
+ * is no Claude Code MCP wiring to check.
+ */
+async function checkMcpWiring(rootPath: string): Promise<CheckResult | null> {
+  const readJson = async (rel: string): Promise<Record<string, unknown> | null> => {
+    try {
+      const parsed = JSON.parse(await readFile(join(rootPath, rel), 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const hasOpenlore = (doc: Record<string, unknown> | null): boolean =>
+    !!(doc?.mcpServers as Record<string, unknown> | undefined)?.openlore;
+
+  const inSettings = hasOpenlore(await readJson('.claude/settings.json'));
+  const inMcp = hasOpenlore(await readJson('.mcp.json'));
+
+  if (inSettings && !inMcp) {
+    return {
+      name: 'MCP wiring',
+      status: 'warn',
+      detail: 'openlore MCP server is in .claude/settings.json, which Claude Code never reads for MCP',
+      fix: "Run 'openlore install --agent claude-code --force' to move it to .mcp.json",
+    };
+  }
+  if (inSettings && inMcp) {
+    return {
+      name: 'MCP wiring',
+      status: 'warn',
+      detail: 'stale openlore entry still in .claude/settings.json (Claude Code reads .mcp.json)',
+      fix: "Run 'openlore install --agent claude-code --force' to remove the stale entry",
+    };
+  }
+  if (inMcp) {
+    return { name: 'MCP wiring', status: 'ok', detail: '.mcp.json registers the openlore MCP server' };
+  }
+  return null;
 }
 
 const CLI_PROVIDERS: Record<string, string> = {
@@ -392,6 +438,7 @@ Checks performed:
   • openlore configuration (${OPENLORE_CONFIG_REL_PATH})
   • Analysis artifacts freshness
   • OpenSpec directory presence
+  • MCP wiring (Claude Code reads .mcp.json, not .claude/settings.json)
   • LLM connection (live request with 10s timeout)
   • Embedding connection (if configured)
   • Available disk space
@@ -407,7 +454,7 @@ Checks performed:
       console.log('');
     }
 
-    const [staticChecks, llmCheck, embeddingCheck] = await Promise.all([
+    const [staticChecks, mcpCheck, llmCheck, embeddingCheck] = await Promise.all([
       Promise.all([
         checkNodeVersion(),
         checkGit(rootPath),
@@ -416,12 +463,14 @@ Checks performed:
         checkOpenSpecDir(rootPath),
         checkDiskSpace(rootPath),
       ]),
+      checkMcpWiring(rootPath),
       checkLLMConnection(rootPath),
       checkEmbeddingConnection(rootPath),
     ]);
 
     const checks = [
       ...staticChecks,
+      ...(mcpCheck ? [mcpCheck] : []),
       llmCheck,
       ...(embeddingCheck ? [embeddingCheck] : []),
     ];
