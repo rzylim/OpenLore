@@ -170,6 +170,10 @@ export const TOOL_DEFINITIONS = [
           type: 'number',
           description: 'Number of relevant functions to return (default: 5)',
         },
+        tokenBudget: {
+          type: 'number',
+          description: 'Optional: cap relevantFunctions to ~this many tokens (highest-scored kept, exact duplicates collapsed); each item carries an `expand` handle for get_function_body',
+        },
       },
       required: ['directory', 'task'],
     },
@@ -761,6 +765,10 @@ export const TOOL_DEFINITIONS = [
         minFanIn: {
           type: 'number',
           description: 'Only return functions with at least this many callers (hub filter)',
+        },
+        tokenBudget: {
+          type: 'number',
+          description: 'Optional: cap results to ~this many tokens (highest-scored kept, exact duplicates collapsed); each hit carries an `expand` handle for get_function_body',
         },
       },
       required: ['directory', 'query'],
@@ -1579,8 +1587,8 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
       // generous overrides in MCP_TOOL_TIMEOUT_OVERRIDES.
       await withToolTimeout((async () => {
       if (name === 'orient') {
-        const { task, limit = 5 } = args as { task: string; limit?: number };
-        result = await handleOrient(directory, task, limit);
+        const { task, limit = 5, tokenBudget } = args as { task: string; limit?: number; tokenBudget?: number };
+        result = await handleOrient(directory, task, limit, tokenBudget);
         if (result && typeof result === 'object') {
           const r = result as Record<string, unknown>;
           emit(directory, 'orient', {
@@ -1667,9 +1675,9 @@ async function startMcpServer(options: McpServerOptions = {}): Promise<void> {
           args as { directory: string; base?: string; files?: string[]; domains?: string[]; failOn?: 'error' | 'warning' | 'info'; maxFiles?: number };
         result = await handleCheckSpecDrift(directory, base, files, domains, failOn, maxFiles);
       } else if (name === 'search_code') {
-        const { directory, query, limit = 10, language, minFanIn } =
-          args as { directory: string; query: string; limit?: number; language?: string; minFanIn?: number };
-        result = await handleSearchCode(directory, query, limit, language, minFanIn);
+        const { directory, query, limit = 10, language, minFanIn, tokenBudget } =
+          args as { directory: string; query: string; limit?: number; language?: string; minFanIn?: number; tokenBudget?: number };
+        result = await handleSearchCode(directory, query, limit, language, minFanIn, tokenBudget);
       } else if (name === 'suggest_insertion_points') {
         const { directory, description, limit = 5, language } =
           args as { directory: string; description: string; limit?: number; language?: string };

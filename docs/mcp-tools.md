@@ -32,6 +32,15 @@ or for local development:
 
 **Cline / Roo Code / Kilocode** -- add the same block under `mcpServers` in the MCP settings JSON of your editor.
 
+### Recommended lean surface (cost, Spec 25 P1)
+
+MCP clients send every tool's JSON Schema on every request, so tools the agent never calls are pure per-request overhead. The Spec 14 benchmark showed this is what made openlore *lose* on small repos — and that a lean, navigation-focused surface flips it to a win (see the [Value Scorecard](../README.md#value-scorecard--does-it-pay-for-itself)). Two ways to get the lean surface, in order of preference:
+
+1. **Deferred schemas (best — keeps every tool available).** If your client supports it (Claude Code: `alwaysLoad: false`), advertise tool *names* cheaply and load a tool's schema only when it's used. See the [two-server setup](agent-setup.md) — you keep all 50 tools without paying their schema cost up front.
+2. **`--preset navigation` (server-side, navigation-only).** Add `"args": ["mcp", "--preset", "navigation"]` for a 7-tool graph-traversal surface (orient, search_code, get_subgraph, trace_execution_path, analyze_impact, suggest_insertion_points, get_function_skeleton). This is exactly the configuration the benchmark measured (−7%→−21% cost, −26% round-trips on deep traces). Note it omits the governance tools (`record_decision`, `check_architecture`, inventories), so prefer option 1 if you use the decision gate or architecture checks during a session.
+
+The tool list and schemas are emitted in a fixed, deterministic order with no per-request variation, so the provider KV-cache holds the surface and its cost drops sharply after the first call (guarded by a regression test).
+
 ### Watch mode (keep search_code and orient fresh)
 
 By default the MCP server reads `llm-context.json` from the last `analyze` run. With `--watch-auto`, it also watches source files for changes and incrementally re-indexes signatures so `search_code` and `orient` reflect your latest edits without waiting for the next commit.

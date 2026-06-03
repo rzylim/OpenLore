@@ -17,6 +17,7 @@
 import { join } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, readCachedContext } from './utils.js';
+import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
 import type { RagManifest } from '../../generator/rag-manifest-generator.js';
@@ -92,6 +93,8 @@ interface OrientFunction {
   name: string;
   filePath: string;
   score: number;
+  /** Exact expansion handle (Spec 25 P2): get_function_body(directory, filePath, name). */
+  expand: string;
   signature?: string;
   docstring?: string;
   language: string;
@@ -100,6 +103,8 @@ interface OrientFunction {
   isHub: boolean;
   isEntryPoint: boolean;
   linkedSpecs: Array<{ requirement: string; domain: string; specFile: string }>;
+  /** Other files holding an exact copy, when collapsed under a token budget (P3). */
+  duplicateOf?: string[];
 }
 
 interface CallNeighbour {
@@ -152,6 +157,7 @@ export async function handleOrient(
   directory: string,
   task: string,
   limit = 5,
+  tokenBudget?: number,
 ): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const outputDir = join(absDir, '.openlore', 'analysis');
@@ -201,10 +207,11 @@ export async function handleOrient(
     .filter(r => r.record.filePath !== 'external' && !r.record.id?.startsWith('external::'))
     .slice(0, clampedLimit);
 
-  const relevantFunctions: OrientFunction[] = topResults.map(r => ({
+  const relevantFunctionsAll: OrientFunction[] = topResults.map(r => ({
     name: r.record.name,
     filePath: r.record.filePath,
     score: parseFloat(r.score.toFixed(3)),
+    expand: expandHandle(r.record.name, r.record.filePath),
     signature: r.record.signature || undefined,
     docstring: r.record.docstring || undefined,
     language: r.record.language,
@@ -214,6 +221,15 @@ export async function handleOrient(
     isEntryPoint: r.record.isEntryPoint,
     linkedSpecs: mappingIdx ? specsForFile(mappingIdx, r.record.filePath) : [],
   }));
+
+  // Progressive disclosure (Spec 25 P2–P4): when a tokenBudget is set, collapse
+  // exact duplicates then greedily keep the highest-scored functions that fit.
+  // Default (no budget) is unchanged. The `expand` handle on every kept item
+  // means a dropped/collapsed body is one cheap get_function_body call away.
+  const budgeted = tokenBudget
+    ? applyTokenBudget(collapseExactDuplicates(relevantFunctionsAll), tokenBudget)
+    : { kept: relevantFunctionsAll, omitted: 0 };
+  const relevantFunctions = budgeted.kept;
 
   // ── Relevant files (deduplicated) ─────────────────────────────────────────
   const relevantFiles = [...new Set(relevantFunctions.map(f => f.filePath))];
@@ -554,6 +570,9 @@ export async function handleOrient(
       : {}),
     relevantFiles,
     relevantFunctions,
+    ...(budgeted.omitted > 0
+      ? { relevantFunctionsOmitted: omissionNote(budgeted.omitted, 'raise tokenBudget, increase limit, or call search_code') }
+      : {}),
     ...(specLinkedFunctions.length > 0 ? { specLinkedFunctions } : {}),
     specDomains,
     ...(inlineSpecs !== undefined ? { inlineSpecs } : {}),

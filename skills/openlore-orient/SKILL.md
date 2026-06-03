@@ -1,7 +1,7 @@
 ---
 name: openlore-orient
 version: 2.0
-description: Persistent architectural memory for this codebase. Call `orient(task)` before reading source files to get the relevant functions, callers, spec sections, and insertion points for any task — saving 15,000–50,000 tokens of file-by-file rediscovery.
+description: Persistent architectural memory for this codebase. Call `orient(task)` before reading source files to get the relevant functions, callers, spec sections, and insertion points for any task — one structural lookup instead of file-by-file rediscovery (measured −26% agent round-trips on deep traces; see the README Value Scorecard).
 ---
 
 # OpenLore — orient before you read
@@ -64,8 +64,11 @@ Typical `orient()` against a warm graph in this repo:
 |---|---|
 | Wall time | < 500 ms |
 | Output size | ~1–3k tokens of JSON |
-| Tokens saved vs. file-by-file rediscovery | 15,000–50,000 |
 | Network calls | 0 (all local — no LLM, no API key required) |
+
+End-to-end agent benefit is **task-dependent and measured**, not a fixed per-call token figure:
+**−7%→−21% cost / −26% round-trips on deep traces in large repos**, but *added* overhead on small,
+familiar repos — see the [README Value Scorecard](../../README.md#value-scorecard--does-it-pay-for-itself).
 
 Cold-graph first call may take 2–4s if the on-disk index needs to be loaded; subsequent calls in the same session hit the in-memory cache. See the [main README benchmarks](../../README.md) for the published numbers.
 

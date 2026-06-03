@@ -20,6 +20,7 @@ import {
 } from '../../../constants.js';
 import { fileExists } from '../../../utils/command-helpers.js';
 import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain } from './utils.js';
+import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 
 // ============================================================================
@@ -137,7 +138,8 @@ export async function handleSearchCode(
   query: string,
   limit = 10,
   language?: string,
-  minFanIn?: number
+  minFanIn?: number,
+  tokenBudget?: number
 ): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
@@ -199,6 +201,40 @@ export async function handleSearchCode(
     }
   }
 
+  const allResults = results.map((r) => ({
+    score: r.score,
+    name: r.record.name,
+    filePath: r.record.filePath,
+    // Exact expansion handle (Spec 25 P2): get_function_body(directory, filePath, name).
+    expand: expandHandle(r.record.name, r.record.filePath),
+    className: r.record.className || undefined,
+    language: r.record.language,
+    signature: r.record.signature || undefined,
+    docstring: r.record.docstring || undefined,
+    fanIn: r.record.fanIn,
+    fanOut: r.record.fanOut,
+    isHub: r.record.isHub,
+    isEntryPoint: r.record.isEntryPoint,
+    linkedSpecs: mappingIdx ? specsForFile(mappingIdx, r.record.filePath) : undefined,
+    callers: llmCtx?.edgeStore
+      ? llmCtx.edgeStore.getCallers(r.record.id)
+          .map(e => { const n = llmCtx!.edgeStore!.getNode(e.callerId); return n && !n.isExternal ? { name: n.name, filePath: n.filePath } : null; })
+          .filter((x): x is Neighbour => x !== null)
+      : undefined,
+    callees: llmCtx?.edgeStore
+      ? llmCtx.edgeStore.getCallees(r.record.id)
+          .map(e => { const n = llmCtx!.edgeStore!.getNode(e.calleeId); return n && !n.isExternal ? { name: n.name, filePath: n.filePath } : null; })
+          .filter((x): x is Neighbour => x !== null)
+      : undefined,
+  }));
+
+  // Progressive disclosure (Spec 25 P2–P4): default returns all hits; with a
+  // tokenBudget, collapse exact duplicates then greedily keep the highest-scored
+  // hits that fit. Every hit carries an `expand` handle for get_function_body.
+  const budgeted = tokenBudget
+    ? applyTokenBudget(collapseExactDuplicates(allResults), tokenBudget)
+    : { kept: allResults, omitted: 0 };
+
   return {
     query,
     searchMode,
@@ -207,31 +243,11 @@ export async function handleSearchCode(
           note: 'Embedding server unavailable — results based on keyword matching only. Configure EMBED_BASE_URL + EMBED_MODEL for semantic search.',
         }
       : {}),
-    count: results.length,
-    results: results.map((r) => ({
-      score: r.score,
-      name: r.record.name,
-      filePath: r.record.filePath,
-      className: r.record.className || undefined,
-      language: r.record.language,
-      signature: r.record.signature || undefined,
-      docstring: r.record.docstring || undefined,
-      fanIn: r.record.fanIn,
-      fanOut: r.record.fanOut,
-      isHub: r.record.isHub,
-      isEntryPoint: r.record.isEntryPoint,
-      linkedSpecs: mappingIdx ? specsForFile(mappingIdx, r.record.filePath) : undefined,
-      callers: llmCtx?.edgeStore
-        ? llmCtx.edgeStore.getCallers(r.record.id)
-            .map(e => { const n = llmCtx!.edgeStore!.getNode(e.callerId); return n && !n.isExternal ? { name: n.name, filePath: n.filePath } : null; })
-            .filter((x): x is Neighbour => x !== null)
-        : undefined,
-      callees: llmCtx?.edgeStore
-        ? llmCtx.edgeStore.getCallees(r.record.id)
-            .map(e => { const n = llmCtx!.edgeStore!.getNode(e.calleeId); return n && !n.isExternal ? { name: n.name, filePath: n.filePath } : null; })
-            .filter((x): x is Neighbour => x !== null)
-        : undefined,
-    })),
+    count: budgeted.kept.length,
+    results: budgeted.kept,
+    ...(budgeted.omitted > 0
+      ? { resultsOmitted: omissionNote(budgeted.omitted, 'raise tokenBudget or narrow the query') }
+      : {}),
     ...(specPeers.length > 0 ? { specLinkedFunctions: specPeers } : {}),
   };
 }

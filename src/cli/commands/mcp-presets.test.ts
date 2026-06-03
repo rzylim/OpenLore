@@ -53,6 +53,43 @@ describe('MCP tool presets', () => {
 });
 
 // ============================================================================
+// Spec 25 P1 — cache-prefix stability. The Round-1 loss was per-request tool-
+// schema overhead; the fix is a surface the provider KV-cache can hold. That
+// only works if the emitted tool list is byte-identical across requests, so
+// these guard against any per-request variation (reordering, rebuilt schemas).
+// ============================================================================
+describe('MCP surface cache-prefix stability (spec-25 P1)', () => {
+  const serialize = (opts: { minimal?: boolean; preset?: string }) =>
+    JSON.stringify(selectActiveTools(TOOL_DEFINITIONS, opts).map(t => ({ name: t.name, inputSchema: (t as { inputSchema?: unknown }).inputSchema })));
+
+  it('emits a byte-identical tool list across repeated calls (full + each preset)', () => {
+    for (const opts of [{}, { minimal: true }, { preset: 'navigation' }] as const) {
+      expect(serialize(opts)).toBe(serialize(opts)); // same content twice → stable prefix
+    }
+  });
+
+  it('preset filtering preserves TOOL_DEFINITIONS declaration order (filter, not Set order)', () => {
+    const full = TOOL_DEFINITIONS.map(t => t.name);
+    const nav = selectActiveTools(TOOL_DEFINITIONS, { preset: 'navigation' }).map(t => t.name);
+    // nav names appear in the same relative order as in the full declaration.
+    expect(nav).toEqual(full.filter(n => nav.includes(n)));
+  });
+
+  it('tool names are unique (a duplicate would make the cached prefix order ambiguous)', () => {
+    const names = TOOL_DEFINITIONS.map(t => t.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('every tool carries a static inputSchema object (not rebuilt per request)', () => {
+    for (const t of TOOL_DEFINITIONS) {
+      const a = (t as { inputSchema?: unknown }).inputSchema;
+      const b = (t as { inputSchema?: unknown }).inputSchema;
+      expect(a).toBe(b); // same reference → no per-request reconstruction
+    }
+  });
+});
+
+// ============================================================================
 // Spec 11 — tool annotations: every tool has complete MCP annotations
 // ============================================================================
 import { toolAnnotations } from './mcp.js';

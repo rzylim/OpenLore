@@ -96,7 +96,14 @@ describe('orient command', () => {
     it('passes task, directory and limit through to handleOrient', async () => {
       mockHandleOrient.mockResolvedValue({ task: 't', searchMode: 'bm25_fallback', relevantFunctions: [] });
       await orientCommand.parseAsync(['--task', 'add rate limiting', '--limit', '7'], { from: 'user' });
-      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'add rate limiting', 7);
+      // 4th arg is tokenBudget — undefined when --token-budget is not passed (Spec 25 P4).
+      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'add rate limiting', 7, undefined);
+    });
+
+    it('passes --token-budget through to handleOrient', async () => {
+      mockHandleOrient.mockResolvedValue({ task: 't', searchMode: 'bm25_fallback', relevantFunctions: [] });
+      await orientCommand.parseAsync(['--task', 'auth flow', '--limit', '5', '--token-budget', '400'], { from: 'user' });
+      expect(mockHandleOrient).toHaveBeenCalledWith('/fake/proj', 'auth flow', 5, 400);
     });
 
     it('--json emits the full result object as JSON', async () => {

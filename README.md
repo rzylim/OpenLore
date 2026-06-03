@@ -9,6 +9,37 @@ openlore turns any evolving codebase into a navigable knowledge graph backed by 
 
 ---
 
+## Value Scorecard — does it pay for itself?
+
+OpenLore only earns its place if an agent **with** it reaches a correct answer for less total cost than the same agent **without** it. We measure that inequality and publish it — wins **and** losses. Numbers are from the Spec 14 agent benchmark (`claude -p`, sonnet, N=4 medians, pinned SHAs, `--strict-mcp-config` isolating each arm), measured **2026-06-01**.
+
+| Scenario (task × repo) | Cost Δ | Round-trips Δ | Correctness | Verdict |
+|---|---|---|---|---|
+| **Large/unfamiliar repo · deep "how does X flow through Y"** *(its target)* | **−7% to −21%** | **−26%** | 100% = 100% | ✅ helps — and the win grows with repo size |
+| Small/familiar repo · shallow "who calls X" | **task-dependent** *(Round 1: +43%)* | **+38%** | 100% = 100% | ❌ often adds overhead — measure with `openlore prove` |
+
+> **Re-confirmed live 2026-06-03 (N=2):** the deep-task win **reproduces** — okhttp **−13%, identical to the table below**. The small/familiar case is **task-dependent, not a flat loss**: same repo class, opposite outcomes (chalk **−32%** win vs express **+59%** loss) — the cost there is a sometimes-redundant `orient` round-trip, not tool-schema bytes, so a leaner surface doesn't close it. Don't guess from our repos — run **`openlore prove`** on yours.
+
+Deep-trace detail — the win scales with codebase size (cost Δ; round-trips WITHOUT → WITH):
+
+| Repo (size) | Cost Δ | Round-trips |
+|---|---|---|
+| excalidraw (~640 files) | **−21%** | 25 → 16 |
+| tokio (~790 files) | **−21%** | 17 → 13 |
+| okhttp | **−13%** | 13 → 11 |
+| django (~3k files) | **−7%** | 21 → 15 |
+| gin (110 files, smallest) | +4% *(≈even)* | 10 → 9 |
+
+**When OpenLore helps — and when it doesn't:**
+- **Helps:** large, unfamiliar, or private codebases the model hasn't memorized; deep multi-hop questions; long sessions where re-reading an ever-growing context compounds. The most consistent, hardest-to-game signal is **round-trips: −26%, fewer on every deep task.**
+- **Doesn't (yet):** small, famous repos already in the model's weights answered by a shallow query — there's no orientation tax to remove, so the MCP tool surface is pure overhead.
+
+**Reproduce it:** `npm run bench:agent` (needs an API key for the agent arm). Full methodology, per-task numbers, and caveats: [docs/AGENT-BENCHMARKS.md](docs/AGENT-BENCHMARKS.md). Plumbing latency (orient ~430µs p50) is separate and real: [scripts/BENCHMARKS.md](scripts/BENCHMARKS.md).
+
+> **Honesty contract.** We never publish a savings number the benchmark didn't produce; we always show the loss cases next to the wins; the scorecard is date-stamped and re-measured after each optimization phase. Every public token claim traces to a command you can run in this repo — if it doesn't reproduce, treat it as marketing and call it out.
+
+---
+
 ## Why It Exists
 
 AI agents are powerful but amnesiac. On every new task:
@@ -16,7 +47,7 @@ AI agents are powerful but amnesiac. On every new task:
 - They re-read the same source files to understand structure
 - They forget architectural decisions made two sessions ago
 - They have no link between specs and code — drift is invisible
-- File-by-file navigation often burns an estimated **15,000–50,000 tokens** per orientation pass, before a single line of useful code is written (measured benefit is task-dependent — it shows up on deep questions in larger codebases, not on small/familiar repos; see the † note below)
+- File-by-file navigation costs round-trips and fresh tokens that grow with repo size — on deep traces in large repos the WITHOUT baseline runs **17–25 tool-calls** to reach an answer; openlore cuts that **−26%** (see the [Value Scorecard](#value-scorecard--does-it-pay-for-itself) for the measured numbers, and where it does *not* help)
 - In long sessions, they drift from authoritative retrieval toward internally cached reasoning — producing subtly wrong architectural assumptions that compound silently until a refactor breaks
 
 openlore closes this loop. Run a full analysis once, then keep the graph incrementally updated as the codebase evolves. Even greenfield projects become cognitively "brownfield" after only a few agent sessions — architectural context fragments, decisions disappear, and agents repeatedly reconstruct the same understanding from scratch.
@@ -47,13 +78,12 @@ You can use layer 1 alone to give agents structural context. Add layer 2 for sem
 | Spec drift detection | ❌ | ❌ | ✓ milliseconds, no API |
 | Architectural decision gates | ❌ | ❌ | ✓ pre-commit hook |
 | Offline structural analysis | ❌ | ❌ | ✓ |
-| Token-efficient orient() | ❌ | ❌ | ✓ ~1–3k vs 15–50k tokens † |
+| Token-efficient orient() | ❌ | ❌ | ✓ −7%→−21% cost, −26% round-trips on deep tasks † |
 | Living spec generation | ❌ | ❌ | ✓ |
 | Persistent cross-session architectural memory | ❌ | Partial | ✓ |
 
-† **Measured, and it depends on the task.** The exact token figures above remain
-an estimate, but the Spec 14 agent benchmark (`npm run bench:agent`, WITH vs
-WITHOUT openlore, `claude -p`, N=4 medians) now gives a measured two-tier result:
+† **Measured, and it depends on the task** (full numbers in the [Value Scorecard](#value-scorecard--does-it-pay-for-itself) above). The Spec 14 agent benchmark (`npm run bench:agent`, WITH vs
+WITHOUT openlore, `claude -p`, N=4 medians) gives a two-tier result:
 - **Small, familiar repos + shallow "who-calls-X" queries:** openlore *adds*
   ~43% cost — the model already knows the code, so there's no orientation to save.
 - **Larger codebases + deep "how does X flow through Y" questions (its target):**
@@ -242,7 +272,7 @@ Compares git changes against spec mappings in milliseconds. Detects: Gap (code c
 **MCP** (no API key)
 
 50 graph-native tools exposed over stdio. Together they act as a persistent architectural runtime for coding agents: orientation, graph traversal, semantic retrieval, drift awareness, decision context, and structural risk analysis.
-`orient()` is the main entry point — one call replaces 10+ file reads. `detect_changes` risk-scores changed functions using call graph centrality × change type multiplier. Every tool call runs the same guards — input validation against its schema (bad args → JSON-RPC `-32602`), a per-tool timeout, a deterministic output-size cap, and normalized error codes — and the surface carries complete MCP `annotations`. See [docs/mcp-tools.md](docs/mcp-tools.md).
+`orient()` is the main entry point — it collapses the discovery loop into one call (measured: **−26% round-trips** on deep traces; see the [Value Scorecard](#value-scorecard--does-it-pay-for-itself)). `detect_changes` risk-scores changed functions using call graph centrality × change type multiplier. Every tool call runs the same guards — input validation against its schema (bad args → JSON-RPC `-32602`), a per-tool timeout, a deterministic output-size cap, and normalized error codes — and the surface carries complete MCP `annotations`. See [docs/mcp-tools.md](docs/mcp-tools.md).
 
 `orient()` runs in **~430µs p50** against a 15k-node codebase (TypeScript compiler, ~79k edges). Full benchmark results: [scripts/BENCHMARKS.md](scripts/BENCHMARKS.md).
 

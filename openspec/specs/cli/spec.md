@@ -304,6 +304,12 @@ The system SHALL register the OpenLore MCP server in `.mcp.json` and migrate any
 
 > Decision recorded: e3d3214e
 > Date: 2026-06-03
+### Requirement: TokenbudgetParameterForOrientAndSearchcodeMcpTools
+
+The system SHALL The orient and search_code tools SHALL accept an optional tokenBudget parameter that caps returned results to approximately the specified token count, retaining highest-scored items and collapsing exact duplicates.
+
+> Decision recorded: dbe1a253
+> Date: 2026-06-03
 
 ## Technical Notes
 
@@ -370,3 +376,13 @@ Agents need a deterministic, call-graph-based way to identify unreachable code a
 Claude Code loads MCP servers only from .mcp.json (project scope), ~/.claude.json, or `claude mcp add` — never from .claude/settings.json. Earlier versions (≤2.0.8) wrote mcpServers.openlore to settings.json, so the server silently never loaded.
 
 **Consequences:** Install now writes MCP config to .mcp.json and migrates stale entries out of settings.json; settings.json retains only the SessionStart hook. Uninstall must clean both files. Doctor gains an MCP-wiring check to catch the stale-file misconfiguration.
+
+### Token-budget parameter for orient and search_code MCP tools
+
+**Status:** Approved
+**Date:** 2026-06-03
+**ID:** dbe1a253
+
+Allows callers to cap the number of tokens returned in relevantFunctions/search results, enabling agents to stay within context-window limits without over-fetching; highest-scored items are kept and exact duplicates are collapsed
+
+**Consequences:** orient and search_code gain an optional tokenBudget parameter threaded from CLI/MCP surface through to handlers; callers that omit it get unbounded (legacy) behavior
