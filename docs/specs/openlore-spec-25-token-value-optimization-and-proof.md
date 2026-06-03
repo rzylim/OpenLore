@@ -13,15 +13,34 @@
 Phasing in §8 (prove → optimize → re-prove). Implementation branch:
 `feat/spec-25-value-scorecard`.
 
+Status: **Phases A–D + the honesty guard shipped.** The one remaining item (Q1's
+re-based benchmark *run*) is gated on API budget, not code — the corpus and harness are ready.
+
 - [x] **Phase A — Prove the present, honestly.** README [Value Scorecard](../../README.md#value-scorecard--does-it-pay-for-itself)
   built from the existing measured Spec-14 data (Round-1 loss + Round-2 win, **including the loss
-  cells**), prominent above the fold; replaced the unproven "15–50k tokens" / "replaces 10+ file
-  reads" estimates with measured cost/round-trip deltas; wrote the [honesty contract](../AGENT-BENCHMARKS.md#honesty-contract-spec-25)
-  into the repo. No new benchmark run required (Q1's re-base, which needs API budget, stays open).
-- [ ] Phase B — Cache + lean surface (P1): navigation preset as recommended default, cache-stable prefix, fresh/cached instrumentation.
-- [ ] Phase C — Progressive disclosure + adaptive sizing (P2–P4): minimal-sufficient responses + exact expansion handles, duplicate collapsing, `tokenBudget`.
-- [ ] Phase D — `openlore prove` (Q2): self-serve on-your-repo scorecard.
-- [ ] Q1 follow-up — re-based benchmark run on the target corpus (needs API budget); refresh the scorecard from it.
+  cells**), above the fold; replaced the unproven "15–50k tokens" / "replaces 10+ file reads"
+  estimates with measured cost/round-trip deltas **in the README, the orient skill, and the install
+  template**; wrote the [honesty contract](../AGENT-BENCHMARKS.md#honesty-contract-spec-25) into the repo.
+- [x] **Phase B — Cache + lean surface (P1).** Cache-prefix **stability regression test** (tools/list
+  byte-identical across requests; static schemas; declaration-order filtering) — the win depends on a
+  cacheable prefix. Documented the lean surface (deferred schemas preferred; `--preset navigation`)
+  tied to the benchmark. Fresh-vs-cached is already instrumented in the harness. *Did not* force the
+  install default to navigation (would hide the governance tools the decision gate needs) — opt-in +
+  recommended instead.
+- [x] **Phase C — Progressive disclosure + adaptive sizing (P2–P4).** Every orient/search_code item
+  carries an exact `expand` handle (`name::filePath`); optional `tokenBudget` greedily keeps the
+  highest-scored results that fit (exact duplicates collapsed first, P3), overflow → an `*Omitted`
+  note. Threaded through the MCP tools + the `orient --token-budget` CLI flag. Default unchanged.
+- [x] **Phase D — `openlore prove` (Q2).** New command + shipped `src/core/agent-eval/` core: runs a
+  WITH/WITHOUT pass over graph-derived, oracle-able tasks on the user's own repo and prints a personal
+  scorecard (cost/round-trips/correctness Δ + honest verdict). Agent call behind an injectable runner
+  (unit-tested, no API spend); `--dry-run` previews; real runs need `claude` + an API key.
+- [x] **Honesty guard test** (`src/honesty-contract.test.ts`) — the contract is now executable: the
+  README's published figures must match a reviewed canonical set, and the retired estimates can't
+  reappear in any shipped surface.
+- [ ] **Q1 follow-up (API-budget-gated, not code).** The target corpus (django/tokio/excalidraw/
+  okhttp/gin) and harness are wired; the actual re-based **run** + scorecard refresh needs an API key
+  and budget, so it's left for a maintainer to execute with `npm run bench:agent`.
 
 ---
 
