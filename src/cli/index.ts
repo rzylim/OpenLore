@@ -31,6 +31,7 @@ import { installCommand } from './install/index.js';
 import { preflightCommand } from './preflight/index.js';
 import { exportCommand } from './export/index.js';
 import { manifestCommand } from './manifest/index.js';
+import { serveCommand } from './commands/serve.js';
 import { configureLogger } from '../utils/logger.js';
 
 // Read version from package.json at runtime so it never drifts from the published version
@@ -149,5 +150,6 @@ program.addCommand(installCommand);
 program.addCommand(preflightCommand);
 program.addCommand(exportCommand);
 program.addCommand(manifestCommand);
+program.addCommand(serveCommand);
 
 program.parse();

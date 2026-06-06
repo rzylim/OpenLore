@@ -78,6 +78,14 @@ export interface McpWatcherOptions {
   embedFileCeiling?: number;
   /** Extra glob patterns to ignore in addition to defaults */
   ignore?: string[];
+  /**
+   * Fired after each coalesced batch is flushed to disk (signatures + vector).
+   * Lets a host — e.g. the `openlore serve` daemon — schedule heavier work, such
+   * as a debounced full call-graph re-analyze, off the watcher's own lane. The
+   * watcher deliberately excludes the call graph (too expensive synchronously),
+   * so this is the seam where continuous call-graph freshness is layered on.
+   */
+  onBatchFlushed?: (changedAbsPaths: string[]) => void;
 }
 
 interface ChangedFile {
@@ -154,6 +162,7 @@ export class McpWatcher {
   private readonly embedFileCeiling: number;
   private readonly extraIgnore: string[];
   private readonly debug: boolean;
+  private readonly onBatchFlushed?: (changedAbsPaths: string[]) => void;
 
   private fsWatcher?: FSWatcher;
   private gitWatcher?: FSWatcher;
@@ -186,6 +195,7 @@ export class McpWatcher {
     this.embed       = options.embed ?? true;
     this.extraIgnore = options.ignore ?? [];
     this.debug       = !!process.env.OPENLORE_WATCH_DEBUG;
+    this.onBatchFlushed = options.onBatchFlushed;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -456,6 +466,12 @@ export class McpWatcher {
     process.stderr.write(
       `[mcp-watcher] ${isBulk ? `coalesced ${n} changes` : `updated ${n} file${n === 1 ? '' : 's'}`} (${Date.now() - t0}ms)\n`
     );
+
+    // Real change flushed (signatures + edges patched on disk). Hand off to any
+    // host lane — e.g. serve's debounced call-graph re-analyze. Reached only when
+    // a meaningful batch was processed (the no-op early returns above skip it).
+    // Best-effort: a host callback error must never break the watcher.
+    try { this.onBatchFlushed?.(absPaths); } catch { /* host lane is best-effort */ }
   }
 
   /**

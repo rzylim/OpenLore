@@ -106,6 +106,32 @@ describe('McpWatcher.handleChange', () => {
     expect(entry!.language).toBe('TypeScript');
   });
 
+  it('fires onBatchFlushed with changed paths on a real change, not on a no-op', async () => {
+    const ctx = makeContext();
+    const { rootPath, outputPath } = await setupProject(ctx);
+
+    const flushed: string[][] = [];
+    const { McpWatcher } = await import('./mcp-watcher.js');
+    const watcher = new McpWatcher({
+      rootPath,
+      outputPath,
+      onBatchFlushed: (paths) => flushed.push(paths),
+    });
+
+    // Real source change → callback fires with the abs path.
+    const srcFile = join(rootPath, 'svc.ts');
+    await writeFile(srcFile, 'export function go() { return 1; }', 'utf-8');
+    await watcher.handleChange(srcFile);
+    expect(flushed).toHaveLength(1);
+    expect(flushed[0]).toContain(srcFile);
+
+    // A test file is a no-op (skipped before any work) → callback must NOT fire.
+    const testFile = join(rootPath, 'svc.test.ts');
+    await writeFile(testFile, 'export function t() {}', 'utf-8');
+    await watcher.handleChange(testFile);
+    expect(flushed).toHaveLength(1);
+  });
+
   it('does not touch callGraph when patching signatures', async () => {
     const cg = makeCallGraph();
     const ctx = makeContext({ callGraph: cg });
