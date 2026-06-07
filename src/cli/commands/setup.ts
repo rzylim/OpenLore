@@ -229,14 +229,14 @@ function buildManifest(projectRoot: string, piGlobal = false): Record<ToolName, 
         dest: join(projectRoot, '.opencode', 'prompts', 'sisyphus-sdd.md'),
       },
     ],
-    // Pi (pi.dev) — a single TS extension, not per-skill markdown. Project-local
-    // by default; --global installs it for every project.
+    // Pi (pi.dev) — compiled JS extension from dist/pi/. Project-local by default;
+    // --global installs it for every project via ~/.pi/agent/extensions/.
     pi: [
       {
-        src: join(ex, 'pi', 'openlore.ts'),
+        src: join(PACKAGE_ROOT, 'dist', 'pi', 'extension.js'),
         dest: piGlobal
-          ? join(homedir(), '.pi', 'agent', 'extensions', 'openlore.ts')
-          : join(projectRoot, '.pi', 'extensions', 'openlore.ts'),
+          ? join(homedir(), '.pi', 'agent', 'extensions', 'openlore.js')
+          : join(projectRoot, '.pi', 'extensions', 'openlore.js'),
       },
     ],
   };
@@ -346,7 +346,7 @@ export const setupCommand = new Command('setup')
             checked: omoaDetected,
           },
           {
-            name: 'Pi            (.pi/extensions/openlore.ts — warm-daemon extension; --global for ~/.pi)',
+            name: 'Pi            (.pi/extensions/openlore.js — warm-daemon extension; --global for ~/.pi)',
             value: 'pi' as ToolName,
           },
         ],

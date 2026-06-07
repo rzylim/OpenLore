@@ -50,8 +50,14 @@
     "documentation",
     "reverse-engineering",
     "specification",
-    "cli"
+    "cli",
+    "pi-package"
   ],
+  "pi": {
+    "extensions": [
+      "./dist/pi/extension.js"
+    ]
+  },
   "author": "Clay Good",
   "license": "MIT",
   "repository": {
@@ -126,6 +132,8 @@
     "tree-sitter-cli": "file:stubs/tree-sitter-cli-stub"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "^0.78.1",
+    "@earendil-works/pi-coding-agent": "^0.78.1",
     "@eslint/js": "^9.17.0",
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^4.0.18",
@@ -133,6 +141,7 @@
     "globals": "^16.0.0",
     "memfs": "^4.15.0",
     "tsx": "^4.19.2",
+    "typebox": "^1.2.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.19.1",
     "vitest": "^4.0.18"
