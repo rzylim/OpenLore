@@ -330,7 +330,7 @@ The system SHALL keep performance metrics out of always-loaded skill context and
 > Date: 2026-06-05
 ### Requirement: ServeDaemonOwnsSchemaresetRebuildTrigger
 
-The system SHALL The serve daemon SHALL trigger a background `analyze --force` rebuild whenever a schema-version reset is detected, deduplicating concurrent rebuilds per directory.
+The system SHALL trigger a background `analyze --force` rebuild from the serve daemon whenever a schema-version reset is detected, deduplicating concurrent rebuilds per directory.
 
 > Decision recorded: 55d797b9
 > Date: 2026-06-07
