@@ -254,7 +254,25 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
   };
 
   await writeConfig(ctx.cwd, config);
-  ui.notify('openlore configured — run `openlore analyze` to build the structural index.', 'info');
+  ui.notify('Configuration saved.', 'info');
+
+  const runNow = await ui.confirm(
+    'Run openlore analyze now?',
+    'Builds the structural index required for navigation tools (~30s–2min depending on codebase size)',
+  );
+  if (runNow) {
+    ui.notify('Running openlore analyze…', 'info');
+    const exitCode = await new Promise<number>((resolve) => {
+      const proc = spawn('openlore', ['analyze'], { cwd: ctx.cwd, stdio: 'ignore' });
+      proc.on('close', resolve);
+      proc.on('error', () => resolve(1));
+    });
+    if (exitCode === 0) {
+      ui.notify('Analysis complete — openlore tools are ready.', 'info');
+    } else {
+      ui.notify('openlore analyze failed — check that openlore is installed and run it manually.', 'error');
+    }
+  }
 }
 
 // ── Daemon discovery + lifecycle ──────────────────────────────────────────────
