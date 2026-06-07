@@ -137,7 +137,12 @@ async function configureGeneration(
   const models = apiBase ? await fetchModels(apiBase, apiKey) : null;
 
   if (models && models.length > 0) {
-    model = await ui.select('Model', models) ?? models[0];
+    const currentModel = existing?.generation?.model;
+    const modelList = currentModel && models.includes(currentModel)
+      ? [`${currentModel} *`, ...models.filter((m) => m !== currentModel)]
+      : models;
+    const selectedModel = await ui.select('Model', modelList) ?? modelList[0];
+    model = selectedModel.replace(/ \*$/, '');
   } else {
     const existingModel = existing?.generation?.model ?? PROVIDER_MODEL_DEFAULTS[provider] ?? '';
     const modelTitle = existing?.generation?.model ? `Model (current: ${existing.generation.model})` : 'Model';
@@ -166,7 +171,12 @@ async function configureEmbedding(
   const embedModels = await fetchModels(embedUrl);
   let embedModel: string;
   if (embedModels && embedModels.length > 0) {
-    embedModel = await ui.select('Embedding model', embedModels) ?? embedModels[0];
+    const currentEmbedModel = existing?.model;
+    const embedModelList = currentEmbedModel && embedModels.includes(currentEmbedModel)
+      ? [`${currentEmbedModel} *`, ...embedModels.filter((m) => m !== currentEmbedModel)]
+      : embedModels;
+    const selectedEmbedModel = await ui.select('Embedding model', embedModelList) ?? embedModelList[0];
+    embedModel = selectedEmbedModel.replace(/ \*$/, '');
   } else {
     const existingModel = existing?.model ?? '';
     embedModel = (await ui.input(
