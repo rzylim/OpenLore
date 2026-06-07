@@ -1713,6 +1713,7 @@ async function loadWasmGrammarSoft(
       if (k.includes('web-tree-sitter')) delete req.cache[k];
     }
     const TS = req('web-tree-sitter') as Record<string, unknown>;
+    const WasmQuery = TS.Query as new (lang: unknown, src: string) => { matches(root: TsNodeLike): TsMatch[]; delete?(): void };
     const ParserCtor = (TS.default ?? TS.Parser ?? TS) as {
       new (): { setLanguage(l: unknown): void; parse(s: string): { rootNode: TsNodeLike } };
       init?: () => Promise<void>;
@@ -1733,9 +1734,9 @@ async function loadWasmGrammarSoft(
         const queries: Array<{ delete?: () => void }> = [];
         const runQuery = (src: string): TsMatch[] => {
           try {
-            const q = new TsQuery(lang as unknown as import('tree-sitter').Language, src);
-            queries.push(q as unknown as { delete?: () => void });
-            return q.matches(tree.rootNode as unknown as import('tree-sitter').SyntaxNode) as unknown as TsMatch[];
+            const q = WasmQuery ? new WasmQuery(lang, src) : lang.query(src);
+            queries.push(q);
+            return q.matches(tree.rootNode);
           } catch { return []; }
         };
         try {
