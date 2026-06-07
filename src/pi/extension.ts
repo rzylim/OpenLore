@@ -132,8 +132,8 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
   let apiKey: string | undefined;
 
   if (provider === 'openai-compat') {
-    const urlPlaceholder = baseUrl ? `keep: ${baseUrl}` : 'http://localhost:11434';
-    const rawUrl = await ui.input('Base URL', urlPlaceholder);
+    const urlTitle = baseUrl ? `Base URL (current: ${baseUrl})` : 'Base URL';
+    const rawUrl = await ui.input(urlTitle, 'http://localhost:11434');
     baseUrl = rawUrl || baseUrl || '';
     genSkipSsl = await ui.confirm('Skip SSL verification?', 'Required for local servers with self-signed certificates');
   }
@@ -152,8 +152,8 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
     model = await ui.select('Model', models) ?? models[0];
   } else {
     const existingModel = existing?.generation?.model ?? PROVIDER_MODEL_DEFAULTS[provider] ?? '';
-    const modelPlaceholder = existing?.generation?.model ? `keep: ${existing.generation.model}` : existingModel;
-    model = (await ui.input('Model', modelPlaceholder)) || existingModel;
+    const modelTitle = existing?.generation?.model ? `Model (current: ${existing.generation.model})` : 'Model';
+    model = (await ui.input(modelTitle, PROVIDER_MODEL_DEFAULTS[provider] ?? '')) || existingModel;
   }
 
   const maxFilesRaw = await ui.input('Max files to analyze', String(existing?.analysis?.maxFiles ?? 500));
