@@ -353,10 +353,9 @@ async function ensureDaemon(cwd: string): Promise<Daemon | null> {
   const existing = await readDescriptor(cwd);
   if (existing && (await healthy(existing))) return { baseUrl: `http://${existing.host}:${existing.port}`, token: existing.token };
   try {
-    // On Windows, npm installs .cmd wrappers — spawn() can't resolve them
-    // without an explicit suffix. Use openlore.cmd on win32.
-    const cmd = process.platform === 'win32' ? 'openlore.cmd' : 'openlore';
-    spawn(cmd, ['serve', '--directory', cwd], { detached: true, stdio: 'ignore' }).unref();
+    // On Windows, npm installs .cmd wrappers — shell: true lets spawn()
+    // resolve them without an explicit suffix.
+    spawn('openlore', ['serve', '--directory', cwd], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref();
   } catch { return null; }
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
