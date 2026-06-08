@@ -302,9 +302,12 @@ async function runConfigWizard(ctx: ExtensionContext, existing?: OpenLoreConfig 
     ui.notify('Running openlore analyze…', 'info');
     const [exitCode, errText] = await new Promise<[number, string]>((resolve) => {
       // Try `openlore` in PATH; fall back to `npx openlore` if not found.
+      // On Windows, npm installs .cmd wrappers — shell: true is required for
+      // Node's spawn() to resolve them without an explicit .cmd suffix.
+      const isWin = process.platform === 'win32';
       const trySpawn = (cmd: string, args: string[]) => new Promise<[number, string] | null>((res) => {
         const chunks: Buffer[] = [];
-        const proc = spawn(cmd, args, { cwd: ctx.cwd, stdio: ['ignore', 'ignore', 'pipe'] });
+        const proc = spawn(cmd, args, { cwd: ctx.cwd, stdio: ['ignore', 'ignore', 'pipe'], shell: isWin });
         proc.stderr?.on('data', (d: Buffer) => chunks.push(d));
         proc.on('close', (code) => res([code ?? 1, Buffer.concat(chunks).toString().trim()]));
         proc.on('error', () => res(null));
@@ -350,7 +353,10 @@ async function ensureDaemon(cwd: string): Promise<Daemon | null> {
   const existing = await readDescriptor(cwd);
   if (existing && (await healthy(existing))) return { baseUrl: `http://${existing.host}:${existing.port}`, token: existing.token };
   try {
-    spawn('openlore', ['serve', '--directory', cwd], { detached: true, stdio: 'ignore' }).unref();
+    // On Windows, npm installs .cmd wrappers — spawn() can't resolve them
+    // without an explicit suffix. Use openlore.cmd on win32.
+    const cmd = process.platform === 'win32' ? 'openlore.cmd' : 'openlore';
+    spawn(cmd, ['serve', '--directory', cwd], { detached: true, stdio: 'ignore' }).unref();
   } catch { return null; }
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
