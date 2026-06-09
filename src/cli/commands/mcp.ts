@@ -1246,6 +1246,59 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'get_landmarks',
+    description:
+      'Whole-repo structural anchors as LABELED signals with evidence: the union of ' +
+      'hub/orchestrator/chokepoint/volatile/entrypoint/dead (each per-signal tool exposes only one). ' +
+      'Each function carries its earned labels + raw evidence (e.g. hub:{fanIn}); no blended score — ' +
+      'rank as your task needs. Optionally filter to one label. Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        limit: { type: 'number', description: 'Max landmarks to return, ordered by fan-in (default: 20, max: 200)' },
+        label: { type: 'string', description: 'Optional: return only landmarks carrying this label (hub | orchestrator | chokepoint | volatile | entrypoint | dead)' },
+      },
+      required: ['directory'],
+    },
+  },
+  {
+    name: 'get_map',
+    description:
+      'The lay of the land: a coarse-to-fine map of the call graph. With no communityId, returns the ' +
+      'REGION view — each code community as a super-node (label, size, top files, top landmark) plus ' +
+      'weighted inter-region connections, no function bodies — so you can see where regions connect ' +
+      'without reading any code. Pass a communityId to drill into one region at function granularity. ' +
+      'Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        communityId: { type: 'string', description: 'Optional: drill into this region (a communityId from the region view) at function granularity' },
+      },
+      required: ['directory'],
+    },
+  },
+  {
+    name: 'find_path',
+    description:
+      'Find the route from A to B in the call graph. `from`/`to` may be exact/fuzzy function names ' +
+      'OR selectors: landmark:<id>, role:entrypoint|hub|sink, file:<path>. Returns the single ' +
+      'CHEAPEST path (by call-distance, or fewest hops if useCallDistance=false) plus a few bounded ' +
+      'alternates and a reason — not a raw multi-path dump. "No path within budget" is an explicit ' +
+      'answer. Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        from: { type: 'string', description: 'Start endpoint: a function name, or landmark:<id> / role:entrypoint|hub|sink / file:<path>' },
+        to: { type: 'string', description: 'Goal endpoint: a function name, or landmark:<id> / role:entrypoint|hub|sink / file:<path>' },
+        useCallDistance: { type: 'boolean', description: 'Rank by confidence-weighted call-distance (default true); false ranks by fewest hops' },
+      },
+      required: ['directory', 'from', 'to'],
+    },
+  },
+  {
     name: 'detect_changes',
     description:
       'Detect recently changed functions and rank them by blast radius. ' +
@@ -1434,6 +1487,7 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
   navigation: new Set([
     'orient', 'search_code', 'get_subgraph', 'trace_execution_path',
     'analyze_impact', 'suggest_insertion_points', 'get_function_skeleton',
+    'get_landmarks', 'get_map', 'find_path',
   ]),
 };
 

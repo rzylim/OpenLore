@@ -184,9 +184,9 @@ export const MCP_TOOL_TIMEOUT_MS = 60_000;
 /** Per-tool timeout overrides for inherently slow tools (full analysis / LLM). */
 export const MCP_TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
   analyze_codebase: 1_800_000,        // full static analysis — minutes on large repos
-  generate_tests: 600_000,            // LLM-backed
-  generate_change_proposal: 600_000,  // LLM-backed
-  annotate_story: 600_000,            // LLM-backed
+  generate_tests: 600_000,            // pattern-first; LLM enrichment only when useLlm:true
+  generate_change_proposal: 600_000,  // structural only (orient + search_specs + impact); no LLM
+  annotate_story: 600_000,            // structural only (orient + search_specs + impact); no LLM
   audit_spec_coverage: 300_000,
   sync_decisions: 300_000,
 };
@@ -604,3 +604,11 @@ export const WATCH_EMBED_FILE_CEILING = 5000;
  * churn) before a single coalesced refresh runs, so the whole op settles first.
  */
 export const WATCH_VCS_SETTLE_MS = 750;
+
+/**
+ * Max number of raw call edges a `conclusion`-class MCP tool may include as
+ * provenance before it is treated as a graph dump (the conclusion-over-graph
+ * tool contract — see `src/core/services/mcp-handlers/tool-contract.ts`).
+ * Tunable in one place so the bound stays consistent across the surface.
+ */
+export const MAX_PROVENANCE_EDGES = 25;

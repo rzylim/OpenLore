@@ -174,6 +174,52 @@ describe('handleOrient', () => {
     expect(Buffer.byteLength(JSON.stringify(lean))).toBeLessThan(Buffer.byteLength(JSON.stringify(rich)));
   });
 
+  it('full mode surfaces task-scoped landmarks (labeled, proximity-ordered); lean omits them', async () => {
+    vi.mocked(VectorIndex.exists).mockReturnValue(true);
+    vi.mocked(VectorIndex.search).mockResolvedValue([
+      makeSearchResult({ name: 'seedFn', filePath: 'src/a.ts', id: 'src/a.ts::seedFn' }),
+    ]);
+    const mk = (id: string, fanIn: number, fanOut: number) => ({
+      id, name: id.split('::')[1], filePath: id.split('::')[0], isAsync: false, language: 'typescript',
+      startIndex: 0, endIndex: 1, fanIn, fanOut, isExternal: false, isTest: false,
+    });
+    const seed = mk('src/a.ts::seedFn', 1, 1);
+    const hub = mk('src/a.ts::hubFn', 40, 2); // hub → chokepoint, one hop from the seed
+    vi.mocked(readCachedContext).mockResolvedValue({
+      callGraph: {
+        nodes: [seed, hub],
+        edges: [{ callerId: seed.id, calleeId: hub.id, calleeName: 'hubFn', confidence: 'import', kind: 'calls' }],
+        classes: [], inheritanceEdges: [], hubFunctions: [hub], entryPoints: [], layerViolations: [],
+        stats: { totalNodes: 2, totalEdges: 1, avgFanIn: 0, avgFanOut: 0 },
+      },
+    } as never);
+
+    const full = await handleOrient('/tmp/proj', 'work on seedFn', 5, undefined, false) as {
+      landmarks?: Array<{ name: string; distance: number; hops: number; signals: Array<{ label: string }> }>;
+    };
+    const lean = await handleOrient('/tmp/proj', 'work on seedFn', 5, undefined, true) as Record<string, unknown>;
+
+    expect(Array.isArray(full.landmarks)).toBe(true);
+    const hubLm = full.landmarks!.find(l => l.name === 'hubFn');
+    expect(hubLm).toBeDefined();
+    expect(hubLm!.signals.map(s => s.label)).toContain('hub');
+    expect(typeof hubLm!.distance).toBe('number');
+    expect(typeof hubLm!.hops).toBe('number');
+    expect(full.landmarks!.find(l => l.name === 'seedFn')).toBeUndefined(); // the matched seed is not its own landmark
+    expect('landmarks' in lean).toBe(false); // lean omits the enrichment
+  });
+
+  it('suggests the navigation tools by task intent (find_path / get_map)', async () => {
+    vi.mocked(VectorIndex.exists).mockReturnValue(true);
+    vi.mocked(VectorIndex.search).mockResolvedValue([makeSearchResult({ name: 'doFoo', filePath: 'src/foo.ts' })]);
+
+    const route = await handleOrient('/p', 'how does the request route reach the db writer', 3) as { suggestedTools: string[] };
+    expect(route.suggestedTools).toContain('find_path');
+
+    const map = await handleOrient('/p', 'give me an overview of the architecture and how modules connect', 3) as { suggestedTools: string[] };
+    expect(map.suggestedTools).toContain('get_map');
+  });
+
   it('lean mode skips the enrichment WORK, not just the payload (Spec 27 deepened)', async () => {
     vi.mocked(VectorIndex.exists).mockReturnValue(true);
     vi.mocked(VectorIndex.search).mockResolvedValue([
