@@ -117,6 +117,30 @@ function reachableFrom(
   return live;
 }
 
+/**
+ * The candidate dead-code id set: code nodes (excluding tests) not reachable from
+ * any liveness root (tests, by-name imports, HTTP handlers, main-like). Shares the
+ * documented roots definition with {@link handleFindDeadCode} so `find_dead_code`
+ * and landmark signals agree on what "dead" means. Candidate ids only — deadness
+ * is a signal, never deletion authority (see module header).
+ */
+export async function deadCodeIds(absDir: string, cg: SerializedCallGraph): Promise<Set<string>> {
+  const dep = await loadDepSignals(absDir);
+  const importedNames = dep?.names ?? null;
+  const { forward } = buildAdjacency(cg);
+  const httpHandlerIds = new Set(
+    cg.edges.filter(e => e.confidence === 'http_endpoint' && e.calleeId).map(e => e.calleeId),
+  );
+  const isMainLike = (n: FunctionNode) => n.name === 'main' || n.name === 'default';
+  const isRoot = (n: FunctionNode): boolean =>
+    !!n.isTest || httpHandlerIds.has(n.id) || isMainLike(n) ||
+    (importedNames !== null && importedNames.has(n.name));
+  const codeNodes = cg.nodes.filter(isCodeNode);
+  const seedIds = codeNodes.filter(isRoot).map(r => r.id).sort();
+  const live = reachableFrom(seedIds, forward);
+  return new Set(codeNodes.filter(n => !n.isTest && !live.has(n.id)).map(n => n.id));
+}
+
 export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unknown> {
   const absDir = await validateDirectory(input.directory);
   const ctx = await readCachedContext(absDir);

@@ -12,6 +12,7 @@ import { selectActiveTools, TOOL_PRESETS, TOOL_DEFINITIONS } from './mcp.js';
 const NAV = [
   'orient', 'search_code', 'get_subgraph', 'trace_execution_path',
   'analyze_impact', 'suggest_insertion_points', 'get_function_skeleton',
+  'get_landmarks',
 ];
 
 describe('MCP tool presets', () => {
@@ -24,7 +25,7 @@ describe('MCP tool presets', () => {
     }
   });
 
-  it('navigation preset = exactly the 7 graph-traversal tools, no governance tools', () => {
+  it('navigation preset = exactly the 8 graph-traversal tools, no governance tools', () => {
     const tools = selectActiveTools(TOOL_DEFINITIONS, { preset: 'navigation' }).map(t => t.name);
     expect(new Set(tools)).toEqual(new Set(NAV));
     for (const gov of ['record_decision', 'detect_changes', 'check_spec_drift']) {
@@ -145,15 +146,17 @@ describe('tools/list payload budget (spec-28)', () => {
     return Buffer.byteLength(JSON.stringify({ tools }), 'utf8');
   };
 
-  // Ceilings sit just above the measured size (full ≈ 46.5 KB, nav ≈ 8.0 KB) with
+  // Ceilings sit just above the measured size (full ≈ 46.5 KB, nav ≈ 8.9 KB) with
   // ~1 tool of headroom. A new tool (~900 B) or un-trimmed boilerplate breaches
   // them — forcing a deliberate decision rather than letting the cached prefix creep.
+  // The nav ceiling was bumped 8_500 → 9_800 when get_landmarks (the structural-anchor
+  // navigation primitive) was added to the preset — a conscious budget decision.
   it('full surface stays within its prefix budget', () => {
     expect(payloadBytes({})).toBeLessThan(48_000);
   });
 
   it('navigation preset stays lean (the low-overhead surface that wins the benchmark)', () => {
-    expect(payloadBytes({ preset: 'navigation' })).toBeLessThan(8_500);
+    expect(payloadBytes({ preset: 'navigation' })).toBeLessThan(9_800);
   });
 
   // Lossless-dedup invariant: the `directory` input is shared by every tool, so its

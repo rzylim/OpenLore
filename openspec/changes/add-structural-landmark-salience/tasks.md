@@ -1,48 +1,41 @@
 # Tasks: add structural landmark signals
 
 ## 1. Labeled-signal pass (no composite score)
-- [ ] Add `src/core/analyzer/landmark-signals.ts` exporting
-      `computeLandmarkSignals(graph: SerializedCallGraph): Landmark[]`, where
+- [x] Added `src/core/analyzer/landmark-signals.ts` exporting
+      `computeLandmarkSignals(graph, opts?): Landmark[]`, where
       `Landmark = { id, name, filePath, signals: LandmarkSignal[] }` and
-      `LandmarkSignal = { label: 'hub'|'orchestrator'|'chokepoint'|'volatile'|'entrypoint'|'dead', evidence }`.
-      There is **no** `score` field and **no** weighting — a function appears iff it earns ≥1 label.
-- [ ] Derive each label from the EXISTING classifier; do not recompute or introduce a threshold:
-      - `hub`: the hub set feeding `handleGetCriticalHubs` (`graph.ts:661`); evidence `{ fanIn }`
-      - `orchestrator`: the god-function classifier from `handleGetGodFunctions` (`graph.ts:733`);
-        evidence `{ fanOut }`
-      - `chokepoint`: the **parameter-free conjunction** `hub ∧ ¬orchestrator` (high fan-in but not
-        also high fan-out → a funnel many paths cross). No new numeric cutoff.
-      - `volatile`: change-coupling / churn from `change-coupling.ts`; evidence `{ commits, coChangedWith }`
-      - `entrypoint`: `SerializedCallGraph.entryPoints`
-      - `dead`: dead-code reachability (`reachability.ts:120`)
-      → verify: unit test asserts a known hub carries the `hub` label with its real `fanIn`, a
-      high-churn function carries `volatile`, and **no `score` field is present on any entry**.
+      `LandmarkSignal = { label, evidence }`. No `score` field; a function appears iff it earns ≥1 label.
+- [x] Each label derives from the EXISTING classifier — no new threshold:
+      - `hub`: the precomputed `graph.hubFunctions` set; evidence `{ fanIn }`
+      - `orchestrator`: `fanOut >= GOD_FUNCTION_FAN_OUT_THRESHOLD`; evidence `{ fanOut }`
+      - `chokepoint`: parameter-free `hub ∧ ¬orchestrator`; evidence `{ fanIn, fanOut }`
+      - `volatile`: `volatilityLevel(churn)` from change-coupling (level ≠ low); evidence `{ level, commits, coChangedWith }`
+      - `entrypoint`: `graph.entryPoints`; evidence `{ fanOut }`
+      - `dead`: `deadCodeIds` (reachability classifier), narrowed to no-caller candidates; evidence `{ fanIn }`
+      → verified: unit test asserts a known hub carries `hub` with its real `fanIn`, volatile/dead come
+      from injected classifier data, and **no `score` field is present**.
 
 ## 2. Surface in orient (task-scoped, proximity-ordered)
-- [ ] In `handleOrient` (`orient.ts:156-489`), after the existing function/file matching, take the
-      labeled landmarks nearest the matched functions (reuse `weightedBfs` from
-      `add-call-distance-scoping` if landed, else hop-distance) and attach the top few as
-      `landmarks[]`, **ordered by structural proximity only** — no blended ranking.
-- [ ] Gate it behind the existing `lean` flag (same place the other enrichment lives,
-      `orient.ts:319-489`) so `lean=true` skips it.
-      → verify: `orient.test.ts` shows `landmarks[]` present in full mode, absent in lean mode, each
-      entry carrying its `signals[]` with evidence and ordered by proximity to the matches.
+- [ ] DEFERRED to a follow-up. Phase 2 attaches a proximity-ordered `landmarks[]` to the `orient`
+      response behind the `lean` flag. It touches the large `handleOrient` enrichment phase; deferred
+      to keep this change focused on the reusable signal pass + the global tool. The
+      `OrientSurfacesTaskScopedLandmarks` spec requirement lands with that follow-up.
 
 ## 3. Optional global tool (opt-in preset only)
-- [ ] Add `handleGetLandmarks(directory, { limit, label? })` returning the whole-repo labeled
-      landmarks, optionally filtered to a single `label`. Register in `TOOL_DEFINITIONS`
-      (`mcp.ts:138+`) and the dispatch chain (`tool-dispatch.ts:99-286`), following the `get_cluster`
-      wiring (`mcp.ts:1232`, `tool-dispatch.ts:262`) as the template.
-- [ ] Add `get_landmarks` to the **`navigation` preset only** (`TOOL_PRESETS`, `mcp.ts:1430`); it
-      MUST NOT enter `MINIMAL_TOOLS`. It is opt-in, per the `mcp-quality` tool-surface requirement.
-- [ ] Classify the new tool `conclusion` in the contract table from
-      `enforce-conclusion-over-graph-tool-contract`.
-      → verify: `tool-contract.test.ts` passes for `get_landmarks`; a preset test asserts it is in
-      `navigation` and absent from `minimal`.
+- [x] Added `handleGetLandmarks(directory, { limit, label? })` in
+      `src/core/services/mcp-handlers/landmarks.ts`, returning the whole-repo labeled landmarks,
+      optionally filtered to one label, ordered by fan-in (a single transparent metric, not a blended
+      salience). Registered in `TOOL_DEFINITIONS` and the dispatch chain.
+- [x] Added `get_landmarks` to the **`navigation` preset only**; it is NOT in `MINIMAL_TOOLS`.
+- [x] Classified `get_landmarks` as `conclusion` in the contract table.
+      → verified: `tool-contract.test.ts` completeness passes for `get_landmarks`; a preset test
+      asserts it is in `navigation` and absent from `minimal`.
 
 ## 4. Spec + close the loop
-- [ ] Land the `specs/analyzer/spec.md` delta in this change.
-- [ ] Run `vitest run src/core/analyzer/landmark-signals.test.ts src/core/services/mcp-handlers/orient.test.ts`.
-- [ ] `record_decision` titled "Structural landmark signals as labels, not a composite score"
-      listing the label→classifier mapping and recording the explicit rejection of a blended/weighted
-      salience score.
+- [x] Landed the `specs/analyzer/spec.md` delta (`StructuralLandmarkSignals`).
+      (`OrientSurfacesTaskScopedLandmarks` deferred with Phase 2.)
+- [x] Ran `vitest run src/core/analyzer/landmark-signals.test.ts
+      src/core/services/mcp-handlers/landmarks.test.ts` → passing; verified `get_landmarks` live on
+      the repo's own graph (37 hubs matches the digest; all 6 labels present; contract holds).
+- [x] `record_decision` "Structural landmark signals as labels, not a composite score" recorded
+      (id `bb57d41e`) with the label→classifier mapping and the explicit rejection of a composite score.

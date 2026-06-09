@@ -1246,6 +1246,23 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'get_landmarks',
+    description:
+      'Whole-repo structural anchors as LABELED signals with evidence: the union of ' +
+      'hub/orchestrator/chokepoint/volatile/entrypoint/dead (each per-signal tool exposes only one). ' +
+      'Each function carries its earned labels + raw evidence (e.g. hub:{fanIn}); no blended score — ' +
+      'rank as your task needs. Optionally filter to one label. Run analyze_codebase first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: DIR_DESC },
+        limit: { type: 'number', description: 'Max landmarks to return, ordered by fan-in (default: 20, max: 200)' },
+        label: { type: 'string', description: 'Optional: return only landmarks carrying this label (hub | orchestrator | chokepoint | volatile | entrypoint | dead)' },
+      },
+      required: ['directory'],
+    },
+  },
+  {
     name: 'detect_changes',
     description:
       'Detect recently changed functions and rank them by blast radius. ' +
@@ -1434,6 +1451,7 @@ export const TOOL_PRESETS: Record<string, Set<string>> = {
   navigation: new Set([
     'orient', 'search_code', 'get_subgraph', 'trace_execution_path',
     'analyze_impact', 'suggest_insertion_points', 'get_function_skeleton',
+    'get_landmarks',
   ]),
 };
 

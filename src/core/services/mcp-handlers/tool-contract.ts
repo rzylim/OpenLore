@@ -87,6 +87,7 @@ export const TOOL_OUTPUT_CLASS: Record<string, ToolOutputClass> = {
   get_test_coverage: 'conclusion',
   get_minimal_context: 'conclusion',
   get_cluster: 'conclusion',
+  get_landmarks: 'conclusion',
   detect_changes: 'conclusion',
   record_decision: 'conclusion',
   list_decisions: 'conclusion',
