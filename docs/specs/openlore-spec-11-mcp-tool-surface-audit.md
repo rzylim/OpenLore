@@ -17,13 +17,19 @@ Branch: `openlore-spec-11-mcp-tool-surface-audit`. **DONE** (in PR #117).
 > the WHEN-to-use / WHEN-NOT pattern. M6: [docs/mcp-tools.md](../mcp-tools.md) and the project
 > `CLAUDE.md` tool table synced to the 49-tool surface.
 
-- [ ] M1 — Audit matrix committed: `docs/specs/mcp-tool-audit.md` covering all ~45 tools (purpose, inputs, overlap-with, recommendation).
-- [ ] M2 — Naming normalization rules pinned + every rename wired through a non-breaking alias map (old name -> new handler + one-time deprecation marker).
-- [ ] M3 — `annotations` added to every `TOOL_DEFINITIONS` entry (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`).
-- [ ] M4 — Descriptions rewritten per Anthropic best practice (WHEN to use, WHEN NOT to vs the overlapping tool, what it returns, cost/latency), tied to the orient-first workflow.
-- [ ] M5 — Consolidation decisions executed (merge / keep-with-justification) for the search_* family, decisions read tools, and the context/graph families — each behind an alias so nothing breaks.
-- [ ] M6 — `docs/mcp-tools.md` and the CLAUDE.md tool table brought back in sync with the final surface.
-- [ ] M7 — Tests: alias resolution + deprecation marker, annotations present and correct, no duplicate/empty tool names; `lint`, `typecheck`, `test:run`, `build` green.
+> Status: **implemented** (commit `387a3f1`). Verified 2026-06-09: audit matrix at
+> `docs/specs/mcp-tool-audit.md`; `annotations` (title + 4 hints) on every tool via
+> `toolAnnotations()` in `mcp.ts`; WHEN-to-use descriptions; `mcp-presets.test.ts` asserts
+> annotations are present and tool names are unique. M2/M5: names are already coherent so no
+> renames/aliases were needed — documented in the audit.
+
+- [x] M1 — Audit matrix committed: `docs/specs/mcp-tool-audit.md` covering all ~45 tools (purpose, inputs, overlap-with, recommendation).
+- [x] M2 — Naming normalization rules pinned + every rename wired through a non-breaking alias map (old name -> new handler + one-time deprecation marker).
+- [x] M3 — `annotations` added to every `TOOL_DEFINITIONS` entry (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`).
+- [x] M4 — Descriptions rewritten per Anthropic best practice (WHEN to use, WHEN NOT to vs the overlapping tool, what it returns, cost/latency), tied to the orient-first workflow.
+- [x] M5 — Consolidation decisions executed (merge / keep-with-justification) for the search_* family, decisions read tools, and the context/graph families — each behind an alias so nothing breaks.
+- [x] M6 — `docs/mcp-tools.md` and the CLAUDE.md tool table brought back in sync with the final surface.
+- [x] M7 — Tests: alias resolution + deprecation marker, annotations present and correct, no duplicate/empty tool names; `lint`, `typecheck`, `test:run`, `build` green.
 
 ## Context for you (the agent)
 

@@ -109,14 +109,22 @@ export const FIXTURE_REPOS: FixtureRepo[] = [
     hints: { knownFile: 'lib/rack.rb' },
     expectNonEmpty: ['orient', 'get_architecture_overview'],
   },
-  // TODO(spec-09-followup): add java repo (e.g. a small Apache-2.0 utility lib)
-  // TODO(spec-09-followup): add kotlin repo
-  // TODO(spec-09-followup): add swift repo
-  // TODO(spec-09-followup): add c# repo
-  // TODO(spec-09-followup): add php repo
-  // TODO(spec-09-followup): add scala repo
-  // TODO(spec-09-followup): add elixir repo
-  // TODO(spec-09-followup): add bash repo
+  {
+    id: 'java-commons-cli',
+    url: 'https://github.com/apache/commons-cli.git',
+    sha: '698b238276c0e22e97e4aec703a0b00201d29666', // commit for tag rel/commons-cli-1.9.0 (confirmed via git ls-remote)
+    tag: 'rel/commons-cli-1.9.0',
+    primaryLanguage: 'java',
+    license: 'Apache-2.0',
+    hints: { knownFile: 'src/main/java/org/apache/commons/cli/CommandLine.java' },
+    expectNonEmpty: ['orient', 'get_architecture_overview'],
+  },
+  // The languages below have tree-sitter grammars for structure/signature extraction
+  // but no call-graph CALL_QUERY yet, so they analyze like c-sds (files + signatures,
+  // no call edges). Covering them adds little over the existing C repo; deferred.
+  // TODO(spec-09-followup): add kotlin / swift / c# / php / scala / elixir / bash repos
+  //   once each gains a call-graph query (today they would only exercise the
+  //   structure-only path the c-sds repo already covers).
 ];
 
 /** A 40-char lowercase-hex git SHA. */

@@ -24,6 +24,18 @@ exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview 
 }
 `;
 
+exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview counts per ready repo > overview-counts java-commons-cli@698b238276c0e22e97e4aec703a0b00201d29666 1`] = `
+{
+  "criticalHubs": 10,
+  "cycles": 0,
+  "globalEntryPoints": 20,
+  "layerViolations": 0,
+  "totalClusters": 12,
+  "totalEdges": 0,
+  "totalFiles": 110,
+}
+`;
+
 exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview counts per ready repo > overview-counts py-click@874ca2bc1c30d93a4ac6e36a15ed685eafe89097 1`] = `
 {
   "criticalHubs": 8,
