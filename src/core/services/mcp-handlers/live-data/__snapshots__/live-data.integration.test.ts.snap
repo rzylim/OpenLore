@@ -1,0 +1,73 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview counts per ready repo > overview-counts c-sds@f74b9b785b63c6d8ea312d7e7864df5267149c85 1`] = `
+{
+  "criticalHubs": 5,
+  "cycles": 0,
+  "globalEntryPoints": 15,
+  "layerViolations": 0,
+  "totalClusters": 1,
+  "totalEdges": 0,
+  "totalFiles": 9,
+}
+`;
+
+exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview counts per ready repo > overview-counts go-pkg-errors@614d223910a179a466c1767a985424175c39b465 1`] = `
+{
+  "criticalHubs": 8,
+  "cycles": 0,
+  "globalEntryPoints": 13,
+  "layerViolations": 0,
+  "totalClusters": 1,
+  "totalEdges": 0,
+  "totalFiles": 16,
+}
+`;
+
+exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview counts per ready repo > overview-counts py-click@874ca2bc1c30d93a4ac6e36a15ed685eafe89097 1`] = `
+{
+  "criticalHubs": 8,
+  "cycles": 2,
+  "globalEntryPoints": 20,
+  "layerViolations": 0,
+  "totalClusters": 21,
+  "totalEdges": 156,
+  "totalFiles": 140,
+}
+`;
+
+exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview counts per ready repo > overview-counts ruby-rack@0eabeb73b3fb590e187dacfd9a890fbb7ffb9477 1`] = `
+{
+  "criticalHubs": 10,
+  "cycles": 0,
+  "globalEntryPoints": 20,
+  "layerViolations": 0,
+  "totalClusters": 12,
+  "totalEdges": 0,
+  "totalFiles": 174,
+}
+`;
+
+exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview counts per ready repo > overview-counts rust-bitflags@13513699141432af1dea2a6208e99e7bf21958db 1`] = `
+{
+  "criticalHubs": 0,
+  "cycles": 0,
+  "globalEntryPoints": 20,
+  "layerViolations": 0,
+  "totalClusters": 9,
+  "totalEdges": 0,
+  "totalFiles": 113,
+}
+`;
+
+exports[`spec-09 MCP live-data harness > snapshots stable architecture-overview counts per ready repo > overview-counts ts-commander@970ecae402b253de691e6a9066fea22f38fe7431 1`] = `
+{
+  "criticalHubs": 0,
+  "cycles": 0,
+  "globalEntryPoints": 20,
+  "layerViolations": 0,
+  "totalClusters": 11,
+  "totalEdges": 118,
+  "totalFiles": 203,
+}
+`;

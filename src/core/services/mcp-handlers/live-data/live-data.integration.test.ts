@@ -22,7 +22,7 @@ import { ensureRepo, cacheDir } from './repo-cache.js';
 import { analyzeRepo, deriveFacts } from './analyze-repo.js';
 import { TOOL_REGISTRY, type RepoFacts } from './tool-driver.js';
 import { dispatchTool, UnknownToolError } from '../../tool-dispatch.js';
-import { checkInvariants, isNonTrivial, serializeResult } from './invariants.js';
+import { checkInvariants, isNonTrivial } from './invariants.js';
 import { summarize, printReport, writeReport, type ReportRow } from './report.js';
 
 /**
@@ -196,13 +196,19 @@ describe('spec-09 MCP live-data harness', () => {
   });
 });
 
-/** Pull only the small, stable integer counts out of an overview result. */
+/** Pull only the small, stable integer counts out of an overview result. The
+ * overview shape is `{ summary: { totalFiles, totalClusters, totalEdges, cycles,
+ * layerViolations }, globalEntryPoints, criticalHubs }`. */
 function extractCounts(overview: unknown): Record<string, number> {
   const counts: Record<string, number> = {};
-  const text = serializeResult(overview);
-  for (const key of ['functions', 'edges', 'entryPoints', 'hubs', 'files', 'nodeCount', 'edgeCount']) {
-    const m = new RegExp(`"${key}"\\s*:\\s*(\\d+)`).exec(text);
-    if (m) counts[key] = Number(m[1]);
+  if (overview && typeof overview === 'object') {
+    const o = overview as { summary?: Record<string, unknown>; globalEntryPoints?: unknown[]; criticalHubs?: unknown[] };
+    for (const key of ['totalFiles', 'totalClusters', 'totalEdges', 'cycles', 'layerViolations']) {
+      const v = o.summary?.[key];
+      if (typeof v === 'number') counts[key] = v;
+    }
+    if (Array.isArray(o.globalEntryPoints)) counts.globalEntryPoints = o.globalEntryPoints.length;
+    if (Array.isArray(o.criticalHubs)) counts.criticalHubs = o.criticalHubs.length;
   }
   return counts;
 }

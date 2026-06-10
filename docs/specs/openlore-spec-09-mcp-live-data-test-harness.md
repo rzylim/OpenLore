@@ -34,7 +34,10 @@ Branch: `openlore-spec-09-mcp-live-data-test-harness`. **IN PROGRESS — overrid
 - [x] Wired into `vitest.integration.config.ts` only (+ `test:live` script); default `test:run` stays fast and offline.
 - [x] `npm run lint`, `npm run typecheck`, `npm run test:run`, `npm run build` all green.
 - [x] One PR opened, titled `spec-09: MCP live-data test harness`. → https://github.com/clay-good/OpenLore/pull/137
-- [ ] TODO(spec-09-followup): networked run to confirm/correct pinned SHAs and generate the overview-count golden snapshots (cannot run from the build sandbox — no network).
+- [x] Networked run completed: pinned SHAs resolved to real release commits via `git ls-remote` (annotated tags peeled to their commit); overview-count golden snapshots generated and committed under `__snapshots__/`. **Live run result: 300 pass · 0 fail · 18 skip** across all 6 repos (TS/JS, Python, Go, Rust, C, Ruby). The 18 skips are `get_spec` (OSS repos ship no spec domains) and the two genuinely-LLM tools (`generate_change_proposal`, `annotate_story`); `generate_tests` runs offline via its no-LLM dry-run path.
+- [ ] TODO(spec-09-followup): add remaining-language repos (Java, Kotlin, Swift, C#, PHP, Scala, Elixir, Bash) — manifest markers in place.
+
+> Findings from the first live run: none requiring a fix here. Two observations recorded for context (not defects, no tool changed): (1) C and Go repos report `totalEdges: 0` in the overview, reflecting the partial receiver/import resolution noted in `call-graph-enrichment-spec.md` — captured in the snapshots; (2) `get_spec` is never exercised because cloned OSS repos carry no OpenSpec domains. Harness-side corrections made while building: the analyze step now also builds the keyword (BM25) index orient/search need, and the required-artifact list drops `mapping.json` (built on demand by `get_mapping`, not by analyze).
 
 ## Context for you (the agent)
 

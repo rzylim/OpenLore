@@ -12,13 +12,13 @@
  * FAILS LOUDLY on mismatch — a moved tag or rewritten history can never silently
  * change the harness inputs (spec-09 §2).
  *
- * SHA verification note (spec-09-followup)
- * ----------------------------------------
- * The `sha` values below are pinned to the named release `tag`. They MUST be
- * confirmed by the first networked run: the cache layer's HEAD-assertion is the
- * backstop — if a `sha` here does not match the tag's actual commit, that repo
- * fails loudly (it never passes silently). Re-run `npm run test:live` with
- * network access to confirm/correct each `sha` and regenerate overview snapshots.
+ * SHA provenance
+ * --------------
+ * The `sha` values below are the COMMIT each release `tag` points to, resolved via
+ * `git ls-remote` (annotated tags peeled to their commit). The cache layer's
+ * HEAD-assertion remains the backstop: if a pinned commit ever fails to match, that
+ * repo fails loudly (it never passes silently). Bump a `sha` only when bumping its
+ * `tag`, and regenerate that repo's overview snapshot.
  *
  * License discipline: only permissive (MIT / Apache-2.0 / BSD) repos. Source is
  * never vendored into OpenLore — it is fetched at run time into the cache.
@@ -52,7 +52,7 @@ export const FIXTURE_REPOS: FixtureRepo[] = [
   {
     id: 'ts-commander',
     url: 'https://github.com/tj/commander.js.git',
-    sha: '0000000000000000000000000000000000000000', // TODO(spec-09-followup): confirm SHA for tag on first networked fetch
+    sha: '970ecae402b253de691e6a9066fea22f38fe7431', // commit for tag v12.1.0 (confirmed via git ls-remote)
     tag: 'v12.1.0',
     primaryLanguage: 'typescript',
     license: 'MIT',
@@ -62,7 +62,7 @@ export const FIXTURE_REPOS: FixtureRepo[] = [
   {
     id: 'py-click',
     url: 'https://github.com/pallets/click.git',
-    sha: '0000000000000000000000000000000000000000', // TODO(spec-09-followup): confirm SHA for tag on first networked fetch
+    sha: '874ca2bc1c30d93a4ac6e36a15ed685eafe89097', // commit for tag 8.1.7 (confirmed via git ls-remote)
     tag: '8.1.7',
     primaryLanguage: 'python',
     license: 'BSD-3-Clause',
@@ -72,7 +72,7 @@ export const FIXTURE_REPOS: FixtureRepo[] = [
   {
     id: 'go-pkg-errors',
     url: 'https://github.com/pkg/errors.git',
-    sha: '0000000000000000000000000000000000000000', // TODO(spec-09-followup): confirm SHA for tag on first networked fetch
+    sha: '614d223910a179a466c1767a985424175c39b465', // commit for tag v0.9.1 (confirmed via git ls-remote)
     tag: 'v0.9.1',
     primaryLanguage: 'go',
     license: 'BSD-2-Clause',
@@ -82,7 +82,7 @@ export const FIXTURE_REPOS: FixtureRepo[] = [
   {
     id: 'rust-bitflags',
     url: 'https://github.com/bitflags/bitflags.git',
-    sha: '0000000000000000000000000000000000000000', // TODO(spec-09-followup): confirm SHA for tag on first networked fetch
+    sha: '13513699141432af1dea2a6208e99e7bf21958db', // commit for tag 2.6.0 (confirmed via git ls-remote)
     tag: '2.6.0',
     primaryLanguage: 'rust',
     license: 'MIT OR Apache-2.0',
@@ -92,7 +92,7 @@ export const FIXTURE_REPOS: FixtureRepo[] = [
   {
     id: 'c-sds',
     url: 'https://github.com/antirez/sds.git',
-    sha: '0000000000000000000000000000000000000000', // TODO(spec-09-followup): confirm SHA for tag on first networked fetch
+    sha: 'f74b9b785b63c6d8ea312d7e7864df5267149c85', // commit for tag 2.0.0 (confirmed via git ls-remote)
     tag: '2.0.0',
     primaryLanguage: 'c',
     license: 'BSD-2-Clause',
@@ -102,8 +102,8 @@ export const FIXTURE_REPOS: FixtureRepo[] = [
   {
     id: 'ruby-rack',
     url: 'https://github.com/rack/rack.git',
-    sha: '0000000000000000000000000000000000000000', // TODO(spec-09-followup): confirm SHA for tag on first networked fetch
-    tag: '3.1.8',
+    sha: '0eabeb73b3fb590e187dacfd9a890fbb7ffb9477', // commit for tag v3.1.8 (confirmed via git ls-remote)
+    tag: 'v3.1.8',
     primaryLanguage: 'ruby',
     license: 'MIT',
     hints: { knownFile: 'lib/rack.rb' },

@@ -10,12 +10,13 @@
  */
 
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { openloreInit } from '../../../../api/init.js';
 import { openloreAnalyze } from '../../../../api/analyze.js';
+import { VectorIndex } from '../../../analyzer/vector-index.js';
 import {
   ARTIFACT_LLM_CONTEXT,
-  ARTIFACT_MAPPING,
   ARTIFACT_CALL_GRAPH_DB,
   ARTIFACT_REPO_STRUCTURE,
   OPENLORE_ANALYSIS_REL_PATH,
@@ -23,13 +24,12 @@ import {
 import { dispatchTool } from '../../tool-dispatch.js';
 import type { RepoFacts } from './tool-driver.js';
 
-/** Artifacts every tool relies on; analyze must produce all of them. */
-const REQUIRED_ARTIFACTS = [
-  ARTIFACT_REPO_STRUCTURE,
-  ARTIFACT_LLM_CONTEXT,
-  ARTIFACT_MAPPING,
-  ARTIFACT_CALL_GRAPH_DB,
-];
+/**
+ * Artifacts `analyze` must produce for the tools to read. These are the three the
+ * read path depends on; `mapping.json` is intentionally NOT here — it is built on
+ * demand by `get_mapping`, not by `analyze`.
+ */
+const REQUIRED_ARTIFACTS = [ARTIFACT_REPO_STRUCTURE, ARTIFACT_LLM_CONTEXT, ARTIFACT_CALL_GRAPH_DB];
 
 /**
  * Run static analysis (no LLM) against a cached repo and assert artifacts exist.
@@ -37,7 +37,7 @@ const REQUIRED_ARTIFACTS = [
  */
 export async function analyzeRepo(dir: string): Promise<void> {
   await openloreInit({ rootPath: dir });
-  await openloreAnalyze({ rootPath: dir, force: true });
+  const result = await openloreAnalyze({ rootPath: dir, force: true });
 
   const analysisDir = join(dir, OPENLORE_ANALYSIS_REL_PATH);
   const missing = REQUIRED_ARTIFACTS.filter((a) => !existsSync(join(analysisDir, a)));
@@ -46,6 +46,41 @@ export async function analyzeRepo(dir: string): Promise<void> {
       `live-data: analyze produced no ${missing.join(', ')} in ${analysisDir} — analyze step failed for this repo.`,
     );
   }
+
+  // The `openloreAnalyze` API builds the call-graph artifacts but NOT the search
+  // index. orient / search_code / suggest_insertion_points need it, so build the
+  // keyword-only (BM25) index here — embedSvc=null keeps it offline and
+  // deterministic (no model download, no network), mirroring `openlore analyze
+  // --no-embed`. Without this, orient correctly returns "No analysis found".
+  await buildKeywordIndex(dir, analysisDir, result.artifacts.llmContext);
+}
+
+async function buildKeywordIndex(
+  dir: string,
+  analysisDir: string,
+  llmContext: { callGraph?: unknown; signatures?: unknown } | undefined,
+): Promise<void> {
+  const cg = (llmContext?.callGraph ?? null) as
+    | { nodes: Array<{ id: string; filePath: string }>; hubFunctions: Array<{ id: string }>; entryPoints: Array<{ id: string }> }
+    | null;
+  if (!cg || cg.nodes.length === 0) return; // nothing to index (tiny repo); leave as-is
+
+  const sigs = (llmContext?.signatures ?? []) as Parameters<typeof VectorIndex.build>[2];
+  const hubIds = new Set(cg.hubFunctions.map((f) => f.id));
+  const entryIds = new Set(cg.entryPoints.map((f) => f.id));
+
+  const fileContents = new Map<string, string>();
+  await Promise.all(
+    [...new Set(cg.nodes.map((n) => n.filePath))].map(async (fp) => {
+      try {
+        fileContents.set(fp, await readFile(join(dir, fp), 'utf-8'));
+      } catch {
+        /* skip unreadable files */
+      }
+    }),
+  );
+
+  await VectorIndex.build(analysisDir, cg.nodes as Parameters<typeof VectorIndex.build>[1], sigs, hubIds, entryIds, null, fileContents, false);
 }
 
 /** Walk an arbitrary tool result for the first objects carrying a function name + file. */

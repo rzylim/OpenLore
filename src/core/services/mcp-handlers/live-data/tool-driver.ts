@@ -168,9 +168,10 @@ export const TOOL_REGISTRY: Record<string, ToolPlan> = {
   sync_decisions: { kind: 'mutating', buildArgs: (f) => ({ directory: f.directory, dryRun: true }) },
 
   // ── LLM-backed tools (openWorldHint) ─────────────────────────────────────
-  // generate_tests has a no-LLM template path: useLlm:false + dryRun:true keeps it offline-safe.
+  // generate_tests has a deterministic no-LLM path (useLlm:false + dryRun:true), so
+  // it is genuinely exercised offline — classified 'read', not 'llm'.
   generate_tests: {
-    kind: 'llm',
+    kind: 'read',
     buildArgs: (f) => ({ directory: f.directory, useLlm: false, dryRun: true }),
   },
   generate_change_proposal: {
