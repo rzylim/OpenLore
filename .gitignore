@@ -181,6 +181,10 @@ test-results/
 # --------------------
 .fastembed_cache/
 */.fastembed_cache/
+
+# spec-09 live-data harness: cloned real OSS repos + their per-repo analysis and
+# the JSON report. Fetched at run time, never committed (override: OPENLORE_LIVE_CACHE_DIR).
+.openlore-live-cache/
 .kilocode/
 .vibe/
 result

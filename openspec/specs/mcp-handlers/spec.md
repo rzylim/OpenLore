@@ -85,3 +85,22 @@ edges AND fan-in ≥ 1** (parameter-free — no "high fan-in" or "leaf-ish" cuto
 - **WHEN** the response is produced
 - **THEN** it contains the chosen path chain plus at most a bounded number of alternates, and no
   unbounded node-and-edge dump
+
+### Requirement: BuildTheMcpLivedataTestHarnessAsAnIntegrationonlyBehaviorneutralVerificationLayer
+
+The system SHALL verify every registered MCP tool against real codebases via a live-data integration harness, with a static coverage gate ensuring all tools have driver entries even when offline.
+
+> Decision recorded: f4bb8a8f
+> Date: 2026-06-10
+
+## Decisions
+
+### Build the MCP live-data test harness as an integration-only, behavior-neutral verification layer
+
+**Status:** Approved
+**Date:** 2026-06-10
+**ID:** f4bb8a8f
+
+Spec-09 drives every tool in TOOL_DEFINITIONS against real OSS repos (pinned by URL+SHA, fetched into a gitignored cache) to catch real-world-only tool defects. The design splits responsibilities: the tool-driver registry, invariant helpers (secret/path scan, budget, shape), and the manifest are pure and tested by plain *.test.ts files that run in CI offline; the clone→init→analyze→drive pipeline lives only in *.integration.test.ts and skips with a loud log when offline. Tools are driven via the existing dispatchTool() single entry point. The static coverage gate (every TOOL_DEFINITIONS name has a driver registry entry) is the headline anti-rot guard and runs offline; the dynamic gate (every tool actually exercised) runs in the integration suite and distinguishes offline-skip from missing-driver.
+
+**Consequences:** Adds src/core/services/mcp-handlers/live-data/ (manifest, repo-cache, analyze-repo, tool-driver, invariants, report, integration test, plain unit tests). Adds a gitignored cache dir and a test:live script. No tool handler, TOOL_DEFINITIONS, dispatch, or protocol code is modified — any defect found is recorded as a TODO(spec-09-followup), never fixed in this change. LLM-backed tools are driven in dryRun where available or skipped behind an env flag when no API key, still covered by the static registry guard.

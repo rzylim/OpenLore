@@ -19,16 +19,21 @@ Branch: `openlore-spec-10-mcp-tool-response-hardening`. **DONE** (in PR #117).
 > (`tool`/`ms`/`bytes`/`outcome`/`code`) via the existing `emit`. Tested in
 > [tool-guard.test.ts](../../src/core/services/mcp-handlers/tool-guard.test.ts).
 
-- [ ] `src/core/services/mcp-handlers/tool-guard.ts` — a single `withToolGuards` wrapper applied in the `CallToolRequestSchema` handler in `mcp.ts`, so every one of the ~45 tools runs through the same input-validation, timeout, output-cap, error-normalization, and telemetry path
-- [ ] Input validation BEFORE the handler runs: validate `args` against the called tool's own `inputSchema` (the JSON Schema already declared on each entry of `TOOL_DEFINITIONS`), reusing the hand-written JSON-Schema-subset validator pattern from spec-05 (`schemas/` + `schema-validator.ts`) — do NOT add Ajv
-- [ ] Per-tool TIMEOUT via the `Promise.race` pattern already used in `readCachedContext`, with a sensible default in `src/constants.ts` and a per-tool override table
-- [ ] Output size cap: when a result exceeds the byte budget, truncate deterministically, set `truncated: true`, and attach a note telling the agent how to narrow the query — never silently drop data
-- [ ] Error normalization: route every thrown error through the existing `sanitizeMcpError`, mapped to a stable error-code taxonomy (`INVALID_ARGS`, `NOT_ANALYZED`, `TIMEOUT`, `OUTPUT_TRUNCATED`, `INTERNAL`), distinguishing "repo not analyzed yet" (actionable) from real failures
-- [ ] Structured per-call telemetry (`tool`, `duration_ms`, `bytes`, `outcome`) via the existing `emit`
-- [ ] Centralize directory validation + `safeJoin` so individual handlers stop re-implementing them
-- [ ] Defaults defined in `src/constants.ts` (timeout ms, output byte budget)
-- [ ] Co-located tests for the wrapper (`tool-guard.test.ts`) plus an existing-tests-still-green check; live-repo verification leans on spec-09's harness
-- [ ] `lint`, `typecheck`, `test:run`, `build` all green
+> Status: **implemented** (commit `387a3f1`). Verified 2026-06-09: `tool-guard.ts`
+> (`validateToolArgs` / `withToolTimeout` / `capOutput` / `classifyToolError`) is applied
+> uniformly in `mcp.ts`; the error-code taxonomy, telemetry, `constants.ts` defaults, and
+> `tool-guard.test.ts` are all present.
+
+- [x] `src/core/services/mcp-handlers/tool-guard.ts` — a single `withToolGuards` wrapper applied in the `CallToolRequestSchema` handler in `mcp.ts`, so every one of the ~45 tools runs through the same input-validation, timeout, output-cap, error-normalization, and telemetry path
+- [x] Input validation BEFORE the handler runs: validate `args` against the called tool's own `inputSchema` (the JSON Schema already declared on each entry of `TOOL_DEFINITIONS`), reusing the hand-written JSON-Schema-subset validator pattern from spec-05 (`schemas/` + `schema-validator.ts`) — do NOT add Ajv
+- [x] Per-tool TIMEOUT via the `Promise.race` pattern already used in `readCachedContext`, with a sensible default in `src/constants.ts` and a per-tool override table
+- [x] Output size cap: when a result exceeds the byte budget, truncate deterministically, set `truncated: true`, and attach a note telling the agent how to narrow the query — never silently drop data
+- [x] Error normalization: route every thrown error through the existing `sanitizeMcpError`, mapped to a stable error-code taxonomy (`INVALID_ARGS`, `NOT_ANALYZED`, `TIMEOUT`, `OUTPUT_TRUNCATED`, `INTERNAL`), distinguishing "repo not analyzed yet" (actionable) from real failures
+- [x] Structured per-call telemetry (`tool`, `duration_ms`, `bytes`, `outcome`) via the existing `emit`
+- [x] Centralize directory validation + `safeJoin` so individual handlers stop re-implementing them
+- [x] Defaults defined in `src/constants.ts` (timeout ms, output byte budget)
+- [x] Co-located tests for the wrapper (`tool-guard.test.ts`) plus an existing-tests-still-green check; live-repo verification leans on spec-09's harness
+- [x] `lint`, `typecheck`, `test:run`, `build` all green
 
 ---
 

@@ -6,34 +6,39 @@
 
 ## Progress
 
-Branch: `openlore-spec-09-mcp-live-data-test-harness`. **NOT DOING — superseded.**
+Branch: `openlore-spec-09-mcp-live-data-test-harness`. **IN PROGRESS — override approved.**
 
-> Decision (2026-06-02): this live-OSS-repo harness is **not being built**. Its goal — confidence
-> that every tool behaves on real codebases — is already covered by better-fitting infrastructure
-> that arrived with the Spec 13–22 arc:
-> - **3000+ unit tests across 137 files**, including per-handler tests for the full tool surface.
-> - **Per-spec real-repo end-to-end validation**: every Layer-3 instrument (provenance, test
->   selection, dead-code, structural-diff, change-coupling) was validated against *this* repo's
->   actual graph / git history during development, not just fixtures.
-> - **The existing integration test config** (`vitest.integration.config.ts`) for heavier paths.
-> - **Spec 10's tool guards** now enforce uniform input-validation / timeout / output-cap /
->   error-normalization for every tool — the invariant this harness would have asserted is now a
->   runtime guarantee.
+> Decision (2026-06-09, `f4bb8a8f`): the earlier "NOT DOING — superseded" call is **overridden**;
+> the harness is being built. To avoid the CI-flakiness concern that motivated the supersede, the
+> design splits responsibilities so the durable anti-rot guards run in CI **offline**:
+> - The **static coverage gate** (every `TOOL_DEFINITIONS` name has a driver registry entry), the
+>   **invariant helpers** (secret/path/budget/shape), and the **manifest validity** checks are pure
+>   and live in plain `*.test.ts` files that run in the fast, offline `test:run` path.
+> - The **network-dependent** clone → analyze → drive pipeline lives only in
+>   `live-data.integration.test.ts` (under `vitest.integration.config.ts`) and SKIPS loudly when
+>   offline; an all-skipped run never reports a false PASS.
 >
-> A network-dependent shallow-clone harness would add CI flakiness and maintenance for marginal
-> additional confidence. Revisit only if a concrete real-world tool failure escapes the above.
+> Original supersede rationale (2026-06-02), retained for history: the goal was thought to be
+> already covered by the Spec 13–22 arc (3000+ unit tests, per-spec real-repo validation, spec-10's
+> runtime tool guards). The override keeps those as the safety net and adds the cross-repo,
+> cross-language coverage gate they do not provide.
 
-- [ ] Curated repo manifest (`fixture-repos.ts`): real OSS repos pinned by git URL + commit SHA, one per supported language family, sized small.
-- [ ] Repo cache layer: shallow-clone-at-SHA into a gitignored cache dir; verify SHA; offline-friendly skip-with-loud-log when network is unavailable (never silent pass).
-- [ ] Analyze step: run `openlore analyze` against each cached repo, fail loudly if artifacts are missing.
-- [ ] Tool driver: invoke every tool in `TOOL_DEFINITIONS` against each analyzed repo with programmatically derived realistic args.
-- [ ] Invariant assertions: no throw, valid MCP result shape, no leaked secrets / absolute-path noise, within byte/token budget, required fields present, expected-non-empty tools return data.
-- [ ] Golden snapshots for the small, stable outputs only (architecture overview counts) keyed by repo + commit.
-- [ ] Coverage gate: assert every tool in `TOOL_DEFINITIONS` is exercised at least once; fail (not skip) when a new tool lacks coverage.
-- [ ] Summary report: tool x repo x pass/fail x output-size matrix, written to a gitignored artifact and printed.
-- [ ] Wired into `vitest.integration.config.ts` only; default `test:run` stays fast and offline.
-- [ ] `npm run lint`, `npm run typecheck`, `npm run test:run`, `npm run build` all green.
-- [ ] One PR opened, titled `spec-09: MCP live-data test harness`.
+- [x] Curated repo manifest (`fixture-repos.ts`): real OSS repos pinned by git URL + commit SHA, one per supported language family, sized small. *(6 repos: TS/JS, Python, Go, Rust, C, Ruby; SHAs pinned to release tags, confirmed by the cache layer's HEAD-assertion on first networked run.)*
+- [x] Repo cache layer: shallow-clone-at-SHA into a gitignored cache dir; verify SHA; offline-friendly skip-with-loud-log when network is unavailable (never silent pass).
+- [x] Analyze step: run `openlore analyze` against each cached repo, fail loudly if artifacts are missing.
+- [x] Tool driver: invoke every tool in `TOOL_DEFINITIONS` against each analyzed repo with programmatically derived realistic args.
+- [x] Invariant assertions: no throw, valid MCP result shape, no leaked secrets / absolute-path noise, within byte/token budget, required fields present, expected-non-empty tools return data.
+- [x] Golden snapshots for the small, stable outputs only (architecture overview counts) keyed by repo + commit.
+- [x] Coverage gate: assert every tool in `TOOL_DEFINITIONS` is exercised at least once; fail (not skip) when a new tool lacks coverage. *(Static registry gate runs offline in `tool-driver.test.ts`; dynamic exercised-gate runs in the integration suite.)*
+- [x] Summary report: tool x repo x pass/fail x output-size matrix, written to a gitignored artifact and printed.
+- [x] Wired into `vitest.integration.config.ts` only (+ `test:live` script); default `test:run` stays fast and offline.
+- [x] `npm run lint`, `npm run typecheck`, `npm run test:run`, `npm run build` all green.
+- [x] One PR opened, titled `spec-09: MCP live-data test harness`. → https://github.com/clay-good/OpenLore/pull/137
+- [x] Networked run completed: pinned SHAs resolved to real release commits via `git ls-remote` (annotated tags peeled to their commit); overview-count golden snapshots generated and committed under `__snapshots__/`. **Live run result: 300 pass · 0 fail · 18 skip** across all 6 repos (TS/JS, Python, Go, Rust, C, Ruby). The 18 skips are `get_spec` (OSS repos ship no spec domains) and the two genuinely-LLM tools (`generate_change_proposal`, `annotate_story`); `generate_tests` runs offline via its no-LLM dry-run path.
+- [x] Java repo added (`apache/commons-cli`) — covers the last remaining call-graph language. The manifest now spans all 6 languages that have a call-graph query (TS/JS, Python, Go, Rust, Ruby, Java) plus C structurally.
+- [ ] TODO(spec-09-followup): Kotlin / Swift / C# / PHP / Scala / Elixir / Bash — deferred. These have tree-sitter grammars for structure/signatures but **no call-graph CALL_QUERY** yet, so they would only exercise the structure-only path the `c-sds` repo already covers. Add once each gains a call-graph query.
+
+> Findings from the first live run: none requiring a fix here. Two observations recorded for context (not defects, no tool changed): (1) C and Go repos report `totalEdges: 0` in the overview, reflecting the partial receiver/import resolution noted in `call-graph-enrichment-spec.md` — captured in the snapshots; (2) `get_spec` is never exercised because cloned OSS repos carry no OpenSpec domains. Harness-side corrections made while building: the analyze step now also builds the keyword (BM25) index orient/search need, and the required-artifact list drops `mapping.json` (built on demand by `get_mapping`, not by analyze).
 
 ## Context for you (the agent)
 

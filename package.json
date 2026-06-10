@@ -1,6 +1,6 @@
 {
   "name": "openlore",
-  "version": "2.0.14",
+  "version": "2.0.15",
   "description": "Persistent architectural memory and structural cognition for AI coding agents.",
   "type": "module",
   "main": "dist/api/index.js",
@@ -35,6 +35,7 @@
     "test:openspec-compat": "vitest run --grep 'openspec' || echo 'No OpenSpec compat tests yet'",
     "test:e2e": "vitest run --config vitest.integration.config.ts --reporter=verbose",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:live": "vitest run --config vitest.integration.config.ts live-data --reporter=verbose",
     "build:watch": "tsc --watch",
     "clean": "rm -rf dist coverage",
     "skill:install-local": "node scripts/install-skill.js",
