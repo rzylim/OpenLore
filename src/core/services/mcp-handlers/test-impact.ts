@@ -26,6 +26,13 @@ export interface SelectTestsInput {
   diffRef?: string;
   /** Max backward-reachability depth (default 12, capped). */
   maxDepth?: number;
+  /**
+   * Restrict backward reachability to directly-resolved edges only, ignoring
+   * synthesized dynamic-dispatch edges (spec: add-synthesized-dynamic-dispatch-edges).
+   * Default false (synthesized edges are traversed, so tests reaching changed code
+   * only through a callback/event/route are still selected).
+   */
+  directResolvedOnly?: boolean;
 }
 
 type Confidence = 'high' | 'medium' | 'low';
@@ -118,7 +125,7 @@ export async function handleSelectTests(input: SelectTestsInput): Promise<unknow
   }
 
   // ── Backward reachability with path tracking (calls + inheritance) ──────────
-  const { nodeMap, backward } = buildAdjacency(cg);
+  const { nodeMap, backward } = buildAdjacency(cg, { directResolvedOnly: input.directResolvedOnly });
   const seedIds = new Set(seeds.map(s => s.id));
   const depthOf = new Map<string, number>();
   const parent = new Map<string, string>(); // node → next node toward a seed

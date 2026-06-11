@@ -124,9 +124,9 @@ export async function dispatchTool(
     const { directory, filePattern } = args as { directory: string; filePattern?: string };
     return handleGetSignatures(directory, filePattern);
   } else if (name === 'get_subgraph') {
-    const { directory, functionName, direction = 'downstream', maxDepth = 3, format = 'json' } =
-      args as { directory: string; functionName: string; direction?: 'downstream' | 'upstream' | 'both'; maxDepth?: number; format?: 'json' | 'mermaid' };
-    return handleGetSubgraph(directory, functionName, direction, maxDepth, format);
+    const { directory, functionName, direction = 'downstream', maxDepth = 3, format = 'json', directResolvedOnly = false } =
+      args as { directory: string; functionName: string; direction?: 'downstream' | 'upstream' | 'both'; maxDepth?: number; format?: 'json' | 'mermaid'; directResolvedOnly?: boolean };
+    return handleGetSubgraph(directory, functionName, direction, maxDepth, format, directResolvedOnly);
   } else if (name === 'trace_execution_path') {
     const { directory, entryFunction, targetFunction, maxDepth = 6, maxPaths = 10 } =
       args as { directory: string; entryFunction: string; targetFunction: string; maxDepth?: number; maxPaths?: number };
@@ -135,17 +135,17 @@ export async function dispatchTool(
     const { directory, domain, orphansOnly } = args as { directory: string; domain?: string; orphansOnly?: boolean };
     return handleGetMapping(directory, domain, orphansOnly);
   } else if (name === 'analyze_impact') {
-    const { directory, symbol, depth = 2 } =
-      args as { directory: string; symbol: string; depth?: number };
-    return handleAnalyzeImpact(directory, symbol, depth);
+    const { directory, symbol, depth = 2, directResolvedOnly = false } =
+      args as { directory: string; symbol: string; depth?: number; directResolvedOnly?: boolean };
+    return handleAnalyzeImpact(directory, symbol, depth, directResolvedOnly);
   } else if (name === 'select_tests') {
-    const { directory, changedSymbols, diffRef, maxDepth } =
-      args as { directory: string; changedSymbols?: string[]; diffRef?: string; maxDepth?: number };
-    return handleSelectTests({ directory, changedSymbols, diffRef, maxDepth });
+    const { directory, changedSymbols, diffRef, maxDepth, directResolvedOnly } =
+      args as { directory: string; changedSymbols?: string[]; diffRef?: string; maxDepth?: number; directResolvedOnly?: boolean };
+    return handleSelectTests({ directory, changedSymbols, diffRef, maxDepth, directResolvedOnly });
   } else if (name === 'find_dead_code') {
-    const { directory, ifDeleted, maxResults, filePattern } =
-      args as { directory: string; ifDeleted?: string; maxResults?: number; filePattern?: string };
-    return handleFindDeadCode({ directory, ifDeleted, maxResults, filePattern });
+    const { directory, ifDeleted, maxResults, filePattern, directResolvedOnly } =
+      args as { directory: string; ifDeleted?: string; maxResults?: number; filePattern?: string; directResolvedOnly?: boolean };
+    return handleFindDeadCode({ directory, ifDeleted, maxResults, filePattern, directResolvedOnly });
   } else if (name === 'structural_diff') {
     const { directory, baseRef, headRef, maxResults } =
       args as { directory: string; baseRef?: string; headRef?: string; maxResults?: number };
@@ -273,8 +273,8 @@ export async function dispatchTool(
     const { directory, communityId } = args as { directory: string; communityId?: string };
     return handleGetMap(directory, communityId);
   } else if (name === 'find_path') {
-    const { directory, from, to, useCallDistance } = args as { directory: string; from: string; to: string; useCallDistance?: boolean };
-    return handleFindPath(directory, from, to, { useCallDistance });
+    const { directory, from, to, useCallDistance, directResolvedOnly } = args as { directory: string; from: string; to: string; useCallDistance?: boolean; directResolvedOnly?: boolean };
+    return handleFindPath(directory, from, to, { useCallDistance, directResolvedOnly });
   } else if (name === 'detect_changes') {
     const { directory, base } = args as { directory: string; base?: string };
     return handleDetectChanges(directory, base);

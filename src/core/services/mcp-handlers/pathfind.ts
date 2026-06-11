@@ -128,12 +128,18 @@ export async function handleFindPath(
   directory: string,
   from: string,
   to: string,
-  opts: { useCallDistance?: boolean } = {},
+  opts: { useCallDistance?: boolean; directResolvedOnly?: boolean } = {},
 ): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
   if (!ctx?.callGraph) return { error: 'No call graph. Run analyze_codebase first.' };
-  const cg = ctx.callGraph as SerializedCallGraph;
+  const rawCg = ctx.callGraph as SerializedCallGraph;
+  // Strict mode: drop synthesized dynamic-dispatch edges so both the unit and the
+  // weighted adjacency built below rest only on directly-resolved edges
+  // (spec: add-synthesized-dynamic-dispatch-edges).
+  const cg = opts.directResolvedOnly
+    ? { ...rawCg, edges: rawCg.edges.filter(e => e.confidence !== 'synthesized') }
+    : rawCg;
   const { nodeMap, forward } = buildAdjacency(cg);
 
   const fromRes = resolveEndpoint(from, cg, forward);

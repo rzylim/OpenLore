@@ -17,7 +17,13 @@ import Parser from 'tree-sitter';
 import { FunctionRegistryTrie } from './function-registry-trie.js';
 import type { ImportMap } from './import-resolver-bridge.js';
 import { inferTypesFromSource, resolveViaTypeInference } from './type-inference-engine.js';
-import { extractAllHttpEdges } from './http-route-parser.js';
+import {
+  extractAllHttpEdges,
+  extractTsRouteDefinitions,
+  extractRouteDefinitions,
+  extractJavaRouteDefinitions,
+  type RouteDefinition,
+} from './http-route-parser.js';
 import { buildProjectedIac } from './iac/index.js';
 import { isIacLanguage } from './iac/types.js';
 import { isTestFile } from './test-file.js';
@@ -35,6 +41,7 @@ export type EdgeConfidence =
   | 'same_file'      // multiple candidates; same-file wins
   | 'name_only'      // last-resort: pick first candidate by name
   | 'type_name'      // Swift/C++ capitalized receiver treated as type name
+  | 'synthesized'    // dynamic-dispatch edge recovered by AST pattern synthesis (not direct name resolution)
   | 'external';      // unresolved external/stdlib call (synthetic leaf node)
 
 /** Broad relationship kind */
@@ -115,6 +122,13 @@ export interface CallEdge {
   kind?: EdgeKind;
   /** Semantic call type; only set when kind === 'calls' */
   callType?: CallType;
+  /**
+   * Name of the synthesis rule that produced this edge (e.g. 'event-channel',
+   * 'route-handler'). Set only when `confidence === 'synthesized'`; absent on
+   * directly-resolved edges. Lets every consumer and agent see which conclusions
+   * lean on a heuristic and which rest on direct name resolution.
+   */
+  synthesizedBy?: string;
 }
 
 /**
@@ -137,6 +151,10 @@ export const CALL_DISTANCE_COSTS: Record<EdgeConfidence, number> = {
   type_name: 2,
   // Heuristic — last-resort first-candidate-by-name match.
   name_only: 3,
+  // Synthesized dynamic-dispatch edge — deliberately costlier than ANY directly-
+  // resolved confidence so find_path / call-distance scoping prefer a directly-
+  // resolved route when one exists, falling back to synthesized only when needed.
+  synthesized: 4,
   // Unresolved external/stdlib leaf — excluded from internal traversal.
   external: Infinity,
 };
@@ -163,6 +181,8 @@ export function callDistance(edge: CallEdge): number {
       return 2;
     case 'name_only':
       return 3;
+    case 'synthesized':
+      return 4;
     case 'external':
       return Infinity;
     default: {
@@ -2676,6 +2696,230 @@ export function computeCyclomaticComplexity(body: string, language: string): num
 // CALL GRAPH BUILDER
 // ============================================================================
 
+// ============================================================================
+// DYNAMIC-DISPATCH EDGE SYNTHESIS (spec: add-synthesized-dynamic-dispatch-edges)
+//
+// A deterministic, additive post-resolution pass that recovers call edges direct
+// name resolution cannot: event channels and route→handler bindings. Every edge
+// it emits carries `confidence: 'synthesized'` + a `synthesizedBy` rule name, so
+// it is never silently mixed with directly-resolved edges. No LLM — pattern
+// matching over the same tree-sitter trees the graph is built from. Rules are
+// independent: each reads the inputs and returns edges; adding one cannot change
+// another's output.
+// ============================================================================
+
+/** Per-channel handler fan-out cap. Over-cap channels are DROPPED, never guessed. */
+export const EVENT_CHANNEL_FANOUT_CAP = 8;
+
+/** JS/TS methods that register a handler on a channel key: `x.on('k', fn)`. */
+const EVENT_REGISTER_METHODS = new Set(['on', 'once', 'addListener', 'addEventListener']);
+/** JS/TS methods that dispatch on a channel key: `x.emit('k')`. */
+const EVENT_DISPATCH_METHODS = new Set(['emit', 'dispatch']);
+
+/** Resolve a referenced simple name to a single internal function node, or undefined
+ *  when unknown or ambiguous (never guesses). Prefers a match in `preferFile`. */
+type HandlerResolver = (name: string, preferFile: string) => FunctionNode | undefined;
+
+/** Method name of a call's callee: property for `a.b()`, identifier for `b()`. */
+function calleeMethodName(callee: Parser.SyntaxNode | null): string | undefined {
+  if (!callee) return undefined;
+  if (callee.type === 'identifier') return callee.text;
+  if (callee.type === 'member_expression') return callee.childForFieldName('property')?.text;
+  return undefined;
+}
+
+/** Static string-literal value of an argument node, or undefined if not a plain literal. */
+function staticStringArg(node: Parser.SyntaxNode | undefined): string | undefined {
+  if (!node) return undefined;
+  if (node.type === 'string') {
+    // tree-sitter `string` text includes the surrounding quotes.
+    return node.text.length >= 2 ? node.text.slice(1, -1) : '';
+  }
+  return undefined;
+}
+
+/**
+ * Event-channel rule: pair `on(k, fn)` / `addEventListener(k, fn)` registrations
+ * with `emit(k)` / `dispatch(k)` dispatch sites on a shared static-literal key,
+ * emitting an edge from each dispatch site's enclosing function to each handler.
+ * Cross-file by key. Per-channel fan-out is capped; over-cap channels are dropped.
+ * JS/TS only (registration + dispatch sites both statically visible).
+ */
+async function synthesizeEventChannelEdges(
+  files: Array<{ path: string; content: string; language: string }>,
+  allNodes: Map<string, FunctionNode>,
+  resolveHandler: HandlerResolver,
+): Promise<CallEdge[]> {
+  interface Reg { key: string; handlerName: string; file: string }
+  interface Disp { key: string; callerId: string }
+  const registrations: Reg[] = [];
+  const dispatches: Disp[] = [];
+
+  const tsFiles = files.filter(f =>
+    (f.language === 'TypeScript' || f.language === 'JavaScript') &&
+    /\b(on|once|addListener|addEventListener|emit|dispatch)\s*\(/.test(f.content),
+  );
+  if (tsFiles.length === 0) return [];
+
+  const { parser } = await getTSParser();
+  const nodesByFile = new Map<string, FunctionNode[]>();
+  for (const n of allNodes.values()) {
+    if (n.isExternal) continue;
+    (nodesByFile.get(n.filePath) ?? nodesByFile.set(n.filePath, []).get(n.filePath)!).push(n);
+  }
+
+  for (const file of tsFiles) {
+    let tree: Parser.Tree;
+    try { tree = (parser as Parser).parse(file.content); } catch { continue; }
+    const fileNodes = nodesByFile.get(file.path) ?? [];
+    for (const call of tree.rootNode.descendantsOfType('call_expression')) {
+      const method = calleeMethodName(call.childForFieldName('function'));
+      if (!method) continue;
+      const argsNode = call.childForFieldName('arguments');
+      if (!argsNode) continue;
+      const args = argsNode.namedChildren;
+      if (EVENT_REGISTER_METHODS.has(method)) {
+        const key = staticStringArg(args[0]);
+        const handlerArg = args[1];
+        if (key !== undefined && handlerArg?.type === 'identifier') {
+          registrations.push({ key, handlerName: handlerArg.text, file: file.path });
+        }
+      } else if (EVENT_DISPATCH_METHODS.has(method)) {
+        const key = staticStringArg(args[0]);
+        if (key !== undefined) {
+          const caller = findEnclosingFunction(fileNodes, call.startIndex);
+          if (caller) dispatches.push({ key, callerId: caller.id });
+        }
+      }
+    }
+  }
+  if (dispatches.length === 0) return [];
+
+  // Group resolved handler node-ids by channel key.
+  const handlersByKey = new Map<string, Set<string>>();
+  for (const reg of registrations) {
+    const handler = resolveHandler(reg.handlerName, reg.file);
+    if (!handler) continue;
+    let set = handlersByKey.get(reg.key);
+    if (!set) handlersByKey.set(reg.key, (set = new Set()));
+    set.add(handler.id);
+  }
+
+  // Fan-out cap: DROP over-cap channels (typically generic keys) rather than guess.
+  for (const [key, set] of handlersByKey) {
+    if (set.size > EVENT_CHANNEL_FANOUT_CAP) {
+      logger.debug(
+        `[edge-synthesis] event-channel '${key}' dropped: ${set.size} handlers exceed cap ${EVENT_CHANNEL_FANOUT_CAP}`,
+      );
+      handlersByKey.delete(key);
+    }
+  }
+
+  const edges: CallEdge[] = [];
+  const seen = new Set<string>();
+  for (const disp of dispatches) {
+    const handlers = handlersByKey.get(disp.key);
+    if (!handlers) continue;
+    for (const handlerId of handlers) {
+      if (handlerId === disp.callerId) continue; // no trivial self-edge
+      const pair = `${disp.callerId}\0${handlerId}`;
+      if (seen.has(pair)) continue;
+      seen.add(pair);
+      edges.push({
+        callerId: disp.callerId,
+        calleeId: handlerId,
+        calleeName: allNodes.get(handlerId)?.name ?? '',
+        confidence: 'synthesized',
+        kind: 'calls',
+        callType: 'direct',
+        synthesizedBy: 'event-channel',
+      });
+    }
+  }
+  return edges;
+}
+
+/** Byte offset of the start of a 1-based line in `content`. */
+function offsetOfLine(content: string, line: number): number {
+  let offset = 0;
+  const lines = content.split('\n');
+  for (let i = 0; i < line - 1 && i < lines.length; i++) offset += lines[i].length + 1;
+  return offset;
+}
+
+/**
+ * Route→handler rule: wire each route detected by the existing route inventory to
+ * the handler function it binds, as a synthesized `calls`-kind edge from the route
+ * declaration's enclosing function to the handler. Reuses route detection; does not
+ * extend it. A route with no statically-visible enclosing function is skipped.
+ */
+async function synthesizeRouteHandlerEdges(
+  files: Array<{ path: string; content: string; language: string }>,
+  allNodes: Map<string, FunctionNode>,
+  resolveHandler: HandlerResolver,
+): Promise<CallEdge[]> {
+  const contentByPath = new Map(files.map(f => [f.path, f.content]));
+  const routes: RouteDefinition[] = [];
+  await Promise.all(files.map(async (f) => {
+    try {
+      if (/\.(py|pyw)$/.test(f.path)) routes.push(...await extractRouteDefinitions(f.path));
+      else if (/\.(ts|tsx|js|jsx|mjs)$/.test(f.path)) routes.push(...await extractTsRouteDefinitions(f.path));
+      else if (/\.java$/.test(f.path)) routes.push(...await extractJavaRouteDefinitions(f.path));
+    } catch { /* best-effort per file */ }
+  }));
+  if (routes.length === 0) return [];
+
+  const nodesByFile = new Map<string, FunctionNode[]>();
+  for (const n of allNodes.values()) {
+    if (n.isExternal) continue;
+    (nodesByFile.get(n.filePath) ?? nodesByFile.set(n.filePath, []).get(n.filePath)!).push(n);
+  }
+
+  const edges: CallEdge[] = [];
+  const seen = new Set<string>();
+  for (const route of routes) {
+    if (!route.handlerName) continue;
+    const handler = resolveHandler(route.handlerName, route.file);
+    if (!handler) continue;
+    const content = contentByPath.get(route.file);
+    if (content === undefined) continue;
+    const caller = findEnclosingFunction(nodesByFile.get(route.file) ?? [], offsetOfLine(content, route.line));
+    if (!caller || caller.id === handler.id) continue;
+    const pair = `${caller.id}\0${handler.id}`;
+    if (seen.has(pair)) continue;
+    seen.add(pair);
+    edges.push({
+      callerId: caller.id,
+      calleeId: handler.id,
+      calleeName: route.handlerName,
+      line: route.line,
+      confidence: 'synthesized',
+      kind: 'calls',
+      callType: 'direct',
+      synthesizedBy: 'route-handler',
+    });
+  }
+  return edges;
+}
+
+/**
+ * Run all dynamic-dispatch synthesis rules and return the combined synthesized
+ * edges. Rules are independent and order-insensitive; failures are isolated so one
+ * rule cannot abort the others (or the build).
+ */
+export async function synthesizeDynamicDispatchEdges(
+  files: Array<{ path: string; content: string; language: string }>,
+  allNodes: Map<string, FunctionNode>,
+  resolveHandler: HandlerResolver,
+): Promise<CallEdge[]> {
+  const rules: Array<Promise<CallEdge[]>> = [
+    synthesizeEventChannelEdges(files, allNodes, resolveHandler).catch(() => []),
+    synthesizeRouteHandlerEdges(files, allNodes, resolveHandler).catch(() => []),
+  ];
+  const results = await Promise.all(rules);
+  return results.flat();
+}
+
 export class CallGraphBuilder {
   /**
    * Build a call graph from a list of source files.
@@ -2926,6 +3170,22 @@ export class CallGraphBuilder {
       edges.push(...linkCodeToInfra(iac.nodes, allNodes));
     } catch {
       // IaC extraction is best-effort; never fail the whole build
+    }
+
+    // Pass 2d: synthesized dynamic-dispatch edges (spec: add-synthesized-dynamic-dispatch-edges).
+    // Additive and provenance-labeled (confidence: 'synthesized'); runs after direct
+    // resolution and only *adds* edges. Best-effort: synthesis never fails the build.
+    try {
+      const resolveHandler: HandlerResolver = (name, preferFile) => {
+        const candidates = trie.findBySimpleName(name).filter(n => !n.isExternal);
+        if (candidates.length === 0) return undefined;
+        const inFile = candidates.find(n => n.filePath === preferFile);
+        if (inFile) return inFile;
+        return candidates.length === 1 ? candidates[0] : undefined;
+      };
+      edges.push(...await synthesizeDynamicDispatchEdges(files, allNodes, resolveHandler));
+    } catch {
+      // Synthesis is best-effort; a failure must never abort the build.
     }
 
     // Pass 3: Calculate fanIn / fanOut (count unique caller→callee pairs, not call sites)

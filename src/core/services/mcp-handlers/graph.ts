@@ -54,7 +54,7 @@ import { readOpenLoreConfig } from '../config-manager.js';
  * Includes inheritance edges: parent class methods point forward to all child
  * class methods so blast-radius BFS propagates through the class hierarchy.
  */
-export function buildAdjacency(cg: SerializedCallGraph) {
+export function buildAdjacency(cg: SerializedCallGraph, opts?: { directResolvedOnly?: boolean }) {
   const nodeMap = new Map(cg.nodes.map(n => [n.id, n]));
   const forward  = new Map<string, Set<string>>(); // callerId → Set<calleeId>
   const backward = new Map<string, Set<string>>(); // calleeId → Set<callerId>
@@ -65,6 +65,10 @@ export function buildAdjacency(cg: SerializedCallGraph) {
   }
   for (const e of cg.edges) {
     if (!e.calleeId) continue;
+    // Strict mode (spec: add-synthesized-dynamic-dispatch-edges): skip synthesized
+    // dynamic-dispatch edges so traversal rests only on directly-resolved edges —
+    // trading completeness for certainty.
+    if (opts?.directResolvedOnly && e.confidence === 'synthesized') continue;
     // Ensure external nodes (not in cg.nodes) get adjacency entries
     if (!forward.has(e.calleeId))  forward.set(e.calleeId,  new Set());
     if (!backward.has(e.calleeId)) backward.set(e.calleeId, new Set());
@@ -125,7 +129,8 @@ export function bfsFromDB(
   seeds: string[],
   direction: 'forward' | 'backward',
   maxDepth: number,
-  es: CachedContext['edgeStore']
+  es: CachedContext['edgeStore'],
+  opts?: { directResolvedOnly?: boolean }
 ): Map<string, number> {
   const visited = new Map<string, number>();
   for (const id of seeds) visited.set(id, 0);
@@ -137,9 +142,14 @@ export function bfsFromDB(
   let frontier = seeds.filter(id => !id.startsWith('external::'));
 
   for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
-    const edges = direction === 'forward'
+    const rawEdges = direction === 'forward'
       ? es!.getCalleesForIds(frontier)
       : es!.getCallersForIds(frontier);
+    // Strict mode: ignore synthesized dynamic-dispatch edges so the traversal rests
+    // only on directly-resolved edges (spec: add-synthesized-dynamic-dispatch-edges).
+    const edges = opts?.directResolvedOnly
+      ? rawEdges.filter(e => e.confidence !== 'synthesized')
+      : rawEdges;
 
     const nextFrontier: string[] = [];
     for (const e of edges) {
@@ -376,7 +386,8 @@ export async function handleGetSubgraph(
   functionName: string,
   direction: 'downstream' | 'upstream' | 'both' = 'downstream',
   maxDepth = SUBGRAPH_DEFAULT_MAX_DEPTH,
-  format: 'json' | 'mermaid' = 'json'
+  format: 'json' | 'mermaid' = 'json',
+  directResolvedOnly = false,
 ): Promise<unknown> {
   maxDepth = Math.max(1, Math.min(maxDepth, SUBGRAPH_MAX_DEPTH_LIMIT));
   const absDir = await validateDirectory(directory);
@@ -421,11 +432,12 @@ export async function handleGetSubgraph(
   if (seeds.length === 0) return { error: `No function matching "${functionName}" found in call graph.` };
 
   const seedIds = seeds.map(s => s.id);
+  const bfsOpts = { directResolvedOnly };
   const fwdVisited = (direction === 'downstream' || direction === 'both')
-    ? bfsFromDB(seedIds, 'forward',  maxDepth, ctx.edgeStore)
+    ? bfsFromDB(seedIds, 'forward',  maxDepth, ctx.edgeStore, bfsOpts)
     : new Map<string, number>();
   const bwdVisited = (direction === 'upstream' || direction === 'both')
-    ? bfsFromDB(seedIds, 'backward', maxDepth, ctx.edgeStore)
+    ? bfsFromDB(seedIds, 'backward', maxDepth, ctx.edgeStore, bfsOpts)
     : new Map<string, number>();
   const visitedIds = new Set([...fwdVisited.keys(), ...bwdVisited.keys()]);
 
@@ -512,7 +524,8 @@ export async function handleGetSubgraph(
 export async function handleAnalyzeImpact(
   directory: string,
   symbol: string,
-  depth = 2
+  depth = 2,
+  directResolvedOnly = false,
 ): Promise<unknown> {
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
@@ -557,8 +570,9 @@ export async function handleAnalyzeImpact(
 
   const seedIds     = seeds.map(n => n.id);
   const hubIds      = new Set(ctx.edgeStore.getHubs(500).map(n => n.id));
-  const upstreamMap   = bfsFromDB(seedIds, 'backward', depth, ctx.edgeStore);
-  const downstreamMap = bfsFromDB(seedIds, 'forward',  depth, ctx.edgeStore);
+  const bfsOpts = { directResolvedOnly };
+  const upstreamMap   = bfsFromDB(seedIds, 'backward', depth, ctx.edgeStore, bfsOpts);
+  const downstreamMap = bfsFromDB(seedIds, 'forward',  depth, ctx.edgeStore, bfsOpts);
 
   const resolveNode = (id: string): FunctionNode | undefined =>
     ctx.edgeStore!.getNode(id) ?? undefined;

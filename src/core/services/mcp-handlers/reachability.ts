@@ -11,11 +11,18 @@
  * Prior art: knip / ts-prune do mark-and-sweep, but TS/JS-only. This is the
  * cross-language version over the tree-sitter graph (15+ languages).
  *
- * HONEST LIMITS — output is *candidates*, never deletion authority. Dynamic entry
- * points, framework magic (routes, DI, plugin registries), reflection, and
- * externally-consumed public exports all produce false "dead" positives. Roots
- * therefore include tests, imported symbols, and detected framework entries; every
- * candidate carries a confidence level and a reason; nothing is ever auto-deleted.
+ * HONEST LIMITS — output is *candidates*, never deletion authority. Callback /
+ * event-channel and route→handler dispatch is now PARTIALLY recovered via
+ * synthesized edges (single-language, statically-paired registration+dispatch;
+ * spec: add-synthesized-dynamic-dispatch-edges), and a symbol reachable only
+ * through such an edge is no longer reported as high-confidence dead. What remains
+ * a blind spot: reflection, computed/string-built dispatch (`obj[name]()`),
+ * cross-language bridges, DI/plugin registries with no statically-visible binding,
+ * and externally-consumed public exports — these can still produce false "dead"
+ * positives. Roots include tests, imported symbols, and detected framework
+ * entries; every candidate carries a confidence level and a reason; nothing is
+ * ever auto-deleted. Pass `directResolvedOnly` to ignore synthesized edges and get
+ * the strict directly-resolved reachability instead.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -34,6 +41,13 @@ export interface FindDeadCodeInput {
   maxResults?: number;
   /** Only report candidates whose file path contains this substring. */
   filePattern?: string;
+  /**
+   * Restrict reachability to directly-resolved edges only: synthesized
+   * dynamic-dispatch edges are not traversed (spec: add-synthesized-dynamic-dispatch-edges).
+   * Trades completeness for certainty — a symbol reachable only through a
+   * synthesized edge is then treated as unreached. Default false.
+   */
+  directResolvedOnly?: boolean;
 }
 
 type Confidence = 'high' | 'medium' | 'low';
@@ -151,7 +165,20 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
   const dep = await loadDepSignals(absDir);
   const importedNames = dep?.names ?? null;
   const importedFiles = dep?.files ?? null;
-  const { nodeMap, forward } = buildAdjacency(cg);
+  const { nodeMap, forward } = buildAdjacency(cg, { directResolvedOnly: input.directResolvedOnly });
+
+  // Map each node reached *into* by a synthesized edge → the rule that produced it.
+  // Used (in non-strict mode) to cap confidence at `low` for any candidate-dead
+  // node that has an incoming synthesized edge whose source is itself unreached —
+  // so a synthesized-dispatch target is never reported as high-confidence dead.
+  const synthRuleByCallee = new Map<string, string>();
+  if (!input.directResolvedOnly) {
+    for (const e of cg.edges) {
+      if (e.confidence === 'synthesized' && e.calleeId) {
+        synthRuleByCallee.set(e.calleeId, e.synthesizedBy ?? 'synthesized');
+      }
+    }
+  }
 
   // ── Roots (liveness seeds) — conservative: prefer false-live over false-dead ──
   // tests (they invoke code) · symbols imported by another file · HTTP route
@@ -223,6 +250,15 @@ export async function handleFindDeadCode(input: FindDeadCodeInput): Promise<unkn
       else if (moduleUsed) confidence = 'low';
       else if (exportSignal === 'none') confidence = 'medium';
       else confidence = noCaller ? 'high' : 'medium';
+
+      // A candidate reached into by a synthesized dynamic-dispatch edge (its
+      // dispatcher itself unreached) is never high-confidence dead — it is a known
+      // dynamic-dispatch blind spot, downgraded to low with the rule named.
+      const synthRule = synthRuleByCallee.get(n.id);
+      if (synthRule) {
+        confidence = 'low';
+        reasons.push(`reachable via a synthesized ${synthRule} edge whose dispatcher is not itself reached — likely live through dynamic dispatch`);
+      }
 
       return {
         name: n.name, file: n.filePath, language: n.language, className: n.className ?? null,
