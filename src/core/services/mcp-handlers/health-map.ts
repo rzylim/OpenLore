@@ -1,5 +1,5 @@
 import { validateDirectory, readCachedContext } from './utils.js';
-import type { SerializedCallGraph, FunctionNode, CallEdge, LayerViolation } from '../../analyzer/call-graph.js';
+import type { SerializedCallGraph, FunctionNode, CallEdge } from '../../analyzer/call-graph.js';
 import { volatilityLevel } from '../../provenance/change-coupling.js';
 
 const HUB_MIN_FAN_IN = 5;

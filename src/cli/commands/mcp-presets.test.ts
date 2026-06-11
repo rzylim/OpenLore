@@ -154,8 +154,9 @@ describe('tools/list payload budget (spec-28)', () => {
   // preset — each a conscious budget decision, not silent drift.
   // Full ceiling bumped 48_000 → 50_000 when the navigation primitives get_landmarks,
   // get_map, and find_path were added to the surface — a conscious budget decision.
+  // Bumped 50_000 → 51_500 when get_surprising_connections was added — conscious budget decision.
   it('full surface stays within its prefix budget', () => {
-    expect(payloadBytes({})).toBeLessThan(50_000);
+    expect(payloadBytes({})).toBeLessThan(51_500);
   });
 
   it('navigation preset stays lean (the low-overhead surface that wins the benchmark)', () => {

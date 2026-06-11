@@ -38,10 +38,6 @@ function node(over: Partial<FunctionNode> & { id: string }): FunctionNode {
   };
 }
 
-function edge(callerId: string, calleeId: string): CallEdge {
-  return { callerId, calleeId, calleeName: calleeId.split('::')[1] ?? calleeId, confidence: 'import', kind: 'calls' };
-}
-
 function violation(callerId: string, calleeId: string): LayerViolation {
   return { callerId, calleeId, callerLayer: 'cli', calleeLayer: 'core', reason: 'layer-skip' };
 }
