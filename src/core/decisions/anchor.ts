@@ -20,6 +20,7 @@ import type {
   StructuralAnchor,
   AnchorVerdict,
   MemoryFreshness,
+  PendingDecision,
 } from '../../types/index.js';
 
 /** Stable, reproducible hash of a source span (or whole file). Unnormalized. */
@@ -153,4 +154,17 @@ export function memoryFreshness(
     verdicts,
     anchored: anchors.length > 0,
   };
+}
+
+/**
+ * The anchors to check freshness against for a decision: its explicit structural
+ * anchors when present, otherwise existence-only file-level anchors derived from
+ * `affectedFiles` (legacy decisions recorded before anchoring). Shared by recall,
+ * orient, and the drift detector so they agree on what a decision is bound to.
+ */
+export function decisionAnchors(
+  d: Pick<PendingDecision, 'anchors' | 'affectedFiles'>,
+): StructuralAnchor[] {
+  if (d.anchors?.length) return d.anchors;
+  return d.affectedFiles.map((filePath) => ({ filePath }));
 }

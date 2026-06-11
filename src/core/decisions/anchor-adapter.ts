@@ -7,9 +7,10 @@
  * {@link AnchorNode}s (for resolution) and a {@link GraphFreshnessView} (for
  * verdicts). All operations are deterministic static analysis — no LLM.
  *
- * File buffers are read once and cached for the adapter's lifetime; an anchor set
- * touches only a handful of files, so this stays cheap. Call {@link close} when
- * done to release the SQLite handle.
+ * File buffers are read once and cached per operation; an anchor set touches only
+ * a handful of files, so this stays cheap. The freshness-view builder is exported
+ * standalone ({@link makeFreshnessView}) so callers that already hold an open
+ * edge store (e.g. orient) can reuse it instead of opening a second handle.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -31,6 +32,56 @@ import {
 
 function analysisDir(rootPath: string): string {
   return join(rootPath, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
+}
+
+/** Read a file's content from disk via a cache, or null if unreadable. */
+function readFileCached(rootPath: string, filePath: string, cache: Map<string, string | null>): string | null {
+  const hit = cache.get(filePath);
+  if (hit !== undefined) return hit;
+  let content: string | null;
+  try {
+    content = readFileSync(join(rootPath, filePath), 'utf-8');
+  } catch {
+    content = null;
+  }
+  cache.set(filePath, content);
+  return content;
+}
+
+/** Hash a node's source span by its byte offsets against current file content. */
+function hashNodeSpan(rootPath: string, node: FunctionNode, cache: Map<string, string | null>): string | undefined {
+  const content = readFileCached(rootPath, node.filePath, cache);
+  if (content === null) return undefined;
+  // start/end are byte offsets; slice a Buffer to stay byte-accurate for multibyte
+  // source. subarray clamps out-of-range indices, so a shrunken file still hashes
+  // deterministically (and differs from the original span → drifted).
+  const buf = Buffer.from(content, 'utf-8');
+  return hashSpan(buf.subarray(node.startIndex, node.endIndex).toString('utf-8'));
+}
+
+/**
+ * Build a {@link GraphFreshnessView} over an already-open edge store + disk. The
+ * view carries its own short-lived file cache. No rename map by default — a
+ * missing symbol is `orphaned` unless the caller supplies `renameOf`.
+ */
+export function makeFreshnessView(
+  store: EdgeStore,
+  rootPath: string,
+  renameOf?: (nodeId: string) => string | undefined,
+): GraphFreshnessView {
+  const cache = new Map<string, string | null>();
+  return {
+    nodeHash: (nodeId: string): string | undefined => {
+      const node = store.getNode(nodeId);
+      return node ? hashNodeSpan(rootPath, node, cache) : undefined;
+    },
+    fileExists: (filePath: string): boolean => existsSync(join(rootPath, filePath)),
+    fileHash: (filePath: string): string | undefined => {
+      const content = readFileCached(rootPath, filePath, cache);
+      return content === null ? undefined : hashSpan(content);
+    },
+    renameOf,
+  };
 }
 
 export class AnchorContext {
@@ -56,27 +107,8 @@ export class AnchorContext {
     try { this.store.close(); } catch { /* ignore */ }
   }
 
-  /** Read a file's full content from disk (cached), or null if unreadable. */
-  private readFile(filePath: string): string | null {
-    if (this.fileCache.has(filePath)) return this.fileCache.get(filePath) ?? null;
-    let content: string | null;
-    try {
-      content = readFileSync(join(this.rootPath, filePath), 'utf-8');
-    } catch {
-      content = null;
-    }
-    this.fileCache.set(filePath, content);
-    return content;
-  }
-
-  /** Hash a node's source span using its byte offsets against current file content. */
   private spanHash(node: FunctionNode): string | undefined {
-    const content = this.readFile(node.filePath);
-    if (content === null) return undefined;
-    // start/end are byte offsets; slice on a Buffer to stay byte-accurate.
-    const buf = Buffer.from(content, 'utf-8');
-    const slice = buf.subarray(node.startIndex, node.endIndex).toString('utf-8');
-    return hashSpan(slice);
+    return hashNodeSpan(this.rootPath, node, this.fileCache);
   }
 
   /** Build resolvable {@link AnchorNode}s for every internal node in the given files. */
@@ -95,22 +127,13 @@ export class AnchorContext {
 
   /** Current whole-file content hash, or undefined when the file is gone. */
   fileContentHash(filePath: string): string | undefined {
-    const content = this.readFile(filePath);
+    const content = readFileCached(this.rootPath, filePath, this.fileCache);
     return content === null ? undefined : hashSpan(content);
   }
 
-  /** A {@link GraphFreshnessView} backed by the live edge store + disk. */
+  /** A {@link GraphFreshnessView} backed by this adapter's edge store + disk. */
   freshnessView(): GraphFreshnessView {
-    return {
-      nodeHash: (nodeId: string): string | undefined => {
-        const node = this.store.getNode(nodeId);
-        if (!node) return undefined;
-        return this.spanHash(node);
-      },
-      fileExists: (filePath: string): boolean =>
-        existsSync(join(this.rootPath, filePath)),
-      fileHash: (filePath: string): string | undefined => this.fileContentHash(filePath),
-    };
+    return makeFreshnessView(this.store, this.rootPath);
   }
 
   /**
@@ -120,17 +143,10 @@ export class AnchorContext {
    */
   resolveDecisionAnchors(affectedFiles: readonly string[], text: string): StructuralAnchor[] {
     const nodes = this.anchorNodesForFiles(affectedFiles);
-    const named = nodes
-      .filter((n) => isNamedIn(text, n.name))
-      .map((n) => n.name);
+    const named = nodes.filter((n) => isNamedIn(text, n.name)).map((n) => n.name);
     const symbolAnchors = resolveSymbolAnchors(named, nodes, affectedFiles);
-
-    const anchoredFiles = new Set(symbolAnchors.map((a) => a.filePath));
-    const fileAnchors = [...new Set(affectedFiles)].map((f) =>
-      fileAnchor(f, this.fileContentHash(f)),
-    );
+    const fileAnchors = [...new Set(affectedFiles)].map((f) => fileAnchor(f, this.fileContentHash(f)));
     // Keep both: file anchors give coarse coverage even where no symbol matched.
-    void anchoredFiles;
     return [...symbolAnchors, ...fileAnchors];
   }
 
@@ -157,11 +173,7 @@ export class AnchorContext {
     const seen = new Set<string>();
     for (const hint of hints) {
       if (hint.symbol) {
-        const resolved = resolveSymbolAnchors(
-          [hint.symbol],
-          nodes,
-          hint.file ? [hint.file] : undefined,
-        );
+        const resolved = resolveSymbolAnchors([hint.symbol], nodes, hint.file ? [hint.file] : undefined);
         if (resolved.length === 1) {
           if (!seen.has(resolved[0].nodeId!)) {
             seen.add(resolved[0].nodeId!);

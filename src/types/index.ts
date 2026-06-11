@@ -228,7 +228,9 @@ export type DriftIssueKind =
   | 'uncovered' // New file/function with no matching spec at all
   | 'orphaned-spec' // Spec references files that no longer exist
   | 'adr-gap' // Code changed in domain referenced by an ADR
-  | 'adr-orphaned'; // ADR references domains that no longer exist in specs
+  | 'adr-orphaned' // ADR references domains that no longer exist in specs
+  | 'memory-drifted' // Code-anchored memory's subject changed since it was recorded
+  | 'memory-orphaned'; // Code-anchored memory's subject no longer exists
 
 export interface DriftOptions extends GlobalOptions {
   base: string;
@@ -268,6 +270,8 @@ export interface DriftResult {
     orphanedSpecs: number;
     adrGaps: number;
     adrOrphaned: number;
+    memoryDrifted: number;
+    memoryOrphaned: number;
     total: number;
   };
   hasDrift: boolean;

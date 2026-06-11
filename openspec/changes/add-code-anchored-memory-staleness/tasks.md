@@ -4,14 +4,21 @@
 > Per project `CLAUDE.md`, call `record_decision` before writing code for the data-model and the
 > two new tools (new data structure + API contract).
 >
-> **Implementation status (PR `feat/code-anchored-memory-staleness`):** sections 1–3, 5, 7, 8 are
-> DONE (anchor model + pure engine, anchor resolution, freshness, the `remember`/`recall` tools in
-> an opt-in `memory` preset with the bullet-proof guarantee, and legacy file-level freshness). A
-> no-task `recall` doubles as the memory-staleness scan, so the namesake capability ships here.
-> DEFERRED to a follow-up to keep this PR surgical: **§4** (wiring `memory-drifted`/`memory-orphaned`
-> into `check_spec_drift`'s finding union + summary) and **§6** (mutating the 71-fan-out `orient`
-> god function to attach verdicts and segregate orphaned memories). The guarantee already holds in
-> the dedicated `recall` path; `orient` integration extends it to the default entry tool.
+> **Implementation status (PR #141, `feat/code-anchored-memory-staleness`):** ALL sections (1–8)
+> are implemented and tested.
+> - §1–3, 5, 7, 8: anchor model + pure engine, deterministic resolution, fresh/drifted/orphaned
+>   freshness, the `remember`/`recall` tools in an opt-in `memory` preset with the bullet-proof
+>   guarantee, and legacy file-level freshness.
+> - §4: `memory-drifted`/`memory-orphaned` are now first-class `check_spec_drift` findings
+>   (`detectMemoryStaleness` in `drift-detector.ts`, folded into `detectDrift` issues + summary).
+> - §6: `orient` attaches a freshness verdict to every surfaced decision and segregates `orphaned`
+>   ones into `staleDecisions`, never the authoritative `pendingDecisions` — the guarantee now holds
+>   at the default entry tool, proven end-to-end in `orient-memory-freshness.test.ts`.
+>
+> Test coverage: pure engine (`anchor.test.ts`), disk adapter incl. byte-accurate multibyte spans +
+> clamping (`anchor-adapter.test.ts`), `record_decision` anchoring (`decisions-anchoring.test.ts`),
+> `remember`/`recall` incl. adversarial inputs (`memory.test.ts`), drift staleness
+> (`memory-staleness.test.ts`), and the orient guarantee (`orient-memory-freshness.test.ts`).
 
 ## 1. Anchor data model (additive, non-breaking)
 - [ ] Add `StructuralAnchor { nodeId, symbolName, filePath, contentHash }` and `MemoryFreshness`

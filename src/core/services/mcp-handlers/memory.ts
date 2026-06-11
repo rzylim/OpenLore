@@ -14,56 +14,17 @@
  * scan over everything persisted.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import { validateDirectory, sanitizeMcpError } from './utils.js';
-import { logger } from '../../../utils/logger.js';
-import { fileExists } from '../../../utils/command-helpers.js';
-import {
-  OPENLORE_DIR,
-  OPENLORE_MEMORY_SUBDIR,
-  MEMORY_NOTES_FILE,
-} from '../../../constants.js';
-import { loadDecisionStore } from '../../decisions/store.js';
+import { loadDecisionStore, INACTIVE_STATUSES } from '../../decisions/store.js';
+import { loadMemoryStore, saveMemoryStore, makeMemoryId } from '../../decisions/memory-store.js';
 import { AnchorContext } from '../../decisions/anchor-adapter.js';
-import { memoryFreshness, type GraphFreshnessView } from '../../decisions/anchor.js';
-import { INACTIVE_STATUSES } from '../../decisions/store.js';
+import { memoryFreshness, decisionAnchors, type GraphFreshnessView } from '../../decisions/anchor.js';
 import type {
   AnchoredMemory,
-  MemoryStore,
   StructuralAnchor,
   PendingDecision,
   AnchorVerdict,
 } from '../../../types/index.js';
-
-// ── Notes store ───────────────────────────────────────────────────────────────
-
-function memoryDir(rootPath: string): string {
-  return join(rootPath, OPENLORE_DIR, OPENLORE_MEMORY_SUBDIR);
-}
-
-async function loadMemoryStore(rootPath: string): Promise<MemoryStore> {
-  const path = join(memoryDir(rootPath), MEMORY_NOTES_FILE);
-  if (!(await fileExists(path))) return { version: '1', updatedAt: '', memories: [] };
-  try {
-    return JSON.parse(await readFile(path, 'utf-8')) as MemoryStore;
-  } catch (err) {
-    logger.warning(`memory store: failed to read ${path} (${(err as Error).message}) — starting fresh`);
-    return { version: '1', updatedAt: '', memories: [] };
-  }
-}
-
-async function saveMemoryStore(rootPath: string, store: MemoryStore): Promise<void> {
-  const dir = memoryDir(rootPath);
-  await mkdir(dir, { recursive: true });
-  const updated: MemoryStore = { ...store, updatedAt: new Date().toISOString() };
-  await writeFile(join(dir, MEMORY_NOTES_FILE), JSON.stringify(updated, null, 2) + '\n', 'utf-8');
-}
-
-function makeMemoryId(content: string, recordedAt: string): string {
-  return createHash('sha256').update(`${recordedAt}:${content}`).digest('hex').slice(0, 8);
-}
 
 // ── remember ────────────────────────────────────────────────────────────────
 
@@ -229,12 +190,6 @@ export async function handleRecall(
 
 function activeDecisions(decisions: PendingDecision[]): PendingDecision[] {
   return decisions.filter((d) => !INACTIVE_STATUSES.has(d.status));
-}
-
-/** A decision's anchors, falling back to existence-only file anchors for legacy ones. */
-function decisionAnchors(d: PendingDecision): StructuralAnchor[] {
-  if (d.anchors?.length) return d.anchors;
-  return d.affectedFiles.map((filePath) => ({ filePath }));
 }
 
 function tokenize(s: string): string[] {

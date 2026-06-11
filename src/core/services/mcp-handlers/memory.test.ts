@@ -112,3 +112,98 @@ describe('handleRecall — bullet-proof guarantee', () => {
     expect(r.total).toBe(2);
   });
 });
+
+// ── decisions in recall + adversarial inputs ──────────────────────────────────
+
+interface PartialDecision {
+  id: string; status: string; title: string; rationale?: string;
+  affectedFiles?: string[]; affectedDomains?: string[];
+  anchors?: Array<Record<string, unknown>>;
+}
+async function writeDecisions(decisions: PartialDecision[]): Promise<void> {
+  const dir = join(root, OPENLORE_DIR, 'decisions');
+  await mkdir(dir, { recursive: true });
+  const full = decisions.map((d) => ({
+    consequences: '', proposedRequirement: null, affectedDomains: [], affectedFiles: [],
+    sessionId: 's', recordedAt: '2026-01-01T00:00:00Z', confidence: 'medium', syncedToSpecs: [],
+    rationale: '', ...d,
+  }));
+  await writeFile(join(dir, 'pending.json'),
+    JSON.stringify({ version: '1', sessionId: 's', updatedAt: '', decisions: full }, null, 2), 'utf-8');
+}
+
+describe('handleRecall — decisions', () => {
+  it('includes an active decision with a fresh file anchor as authoritative', async () => {
+    await writeDecisions([{ id: 'd1', status: 'approved', title: 'keep foo pure', affectedFiles: ['src/foo.ts'] }]);
+    const r = (await handleRecall(root, 'foo pure')) as {
+      authoritative: Array<{ kind: string; id: string; freshness: string }>;
+    };
+    const dec = r.authoritative.find((m) => m.kind === 'decision');
+    expect(dec).toBeDefined();
+    expect(dec!.freshness).toBe('fresh');
+  });
+
+  it('puts a decision whose only affected file was deleted into needsReanchoring (legacy file anchor)', async () => {
+    await writeDecisions([{ id: 'd2', status: 'approved', title: 'about gone', affectedFiles: ['src/gone.ts'] }]);
+    const r = (await handleRecall(root, 'gone')) as {
+      authoritative: unknown[]; needsReanchoring: Array<{ id: string; freshness: string }>;
+    };
+    expect(r.needsReanchoring.some((m) => m.id === 'd2' && m.freshness === 'orphaned')).toBe(true);
+    expect(r.authoritative).toHaveLength(0);
+  });
+
+  it('excludes inactive (rejected/synced/phantom) decisions', async () => {
+    await writeDecisions([
+      { id: 'r1', status: 'rejected', title: 'rejected foo', affectedFiles: ['src/foo.ts'] },
+      { id: 's1', status: 'synced', title: 'synced foo', affectedFiles: ['src/foo.ts'] },
+      { id: 'p1', status: 'phantom', title: 'phantom foo', affectedFiles: ['src/foo.ts'] },
+    ]);
+    const r = (await handleRecall(root, 'foo')) as { total: number; authoritative: unknown[]; needsReanchoring: unknown[] };
+    expect(r.total).toBe(0);
+  });
+});
+
+describe('handleRecall — retrieval semantics & robustness', () => {
+  it('filters by task token overlap and honors limit', async () => {
+    await handleRemember(root, 'alpha invariant about parsing');
+    await handleRemember(root, 'beta note about networking');
+    const r = (await handleRecall(root, 'parsing')) as { total: number; authoritative: Array<{ text: string }> };
+    expect(r.total).toBe(1);
+    expect(r.authoritative[0].text).toContain('parsing');
+
+    const limited = (await handleRecall(root, undefined, 1)) as { total: number };
+    expect(limited.total).toBe(1); // 2 memories exist, limit caps to 1
+  });
+
+  it('matches via tags', async () => {
+    await handleRemember(root, 'a note', undefined, ['concurrency']);
+    const r = (await handleRecall(root, 'concurrency')) as { total: number };
+    expect(r.total).toBe(1);
+  });
+
+  it('reports graphAvailable=false and withholds anchored memory when analysis is absent', async () => {
+    await handleRemember(root, 'anchored note', [{ symbol: 'foo', file: 'src/foo.ts' }]);
+    // Remove the edge store so freshness cannot be verified.
+    await rm(join(root, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR), { recursive: true, force: true });
+    const r = (await handleRecall(root, 'note')) as {
+      graphAvailable: boolean; authoritative: unknown[]; needsReanchoring: unknown[];
+    };
+    expect(r.graphAvailable).toBe(false);
+    // Unverifiable ⇒ never authoritative.
+    expect(r.authoritative).toHaveLength(0);
+    expect(r.needsReanchoring).toHaveLength(1);
+  });
+
+  it('survives a corrupted notes store without crashing', async () => {
+    const dir = join(root, OPENLORE_DIR, 'memory');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'notes.json'), '{ this is not valid json', 'utf-8');
+    const r = (await handleRecall(root, 'anything')) as { total: number; authoritative: unknown[] };
+    expect(r.total).toBe(0); // no crash, empty store
+  });
+
+  it('rejects empty remember content', async () => {
+    const r = (await handleRemember(root, '   ')) as { error?: string };
+    expect(r.error).toBeDefined();
+  });
+});
