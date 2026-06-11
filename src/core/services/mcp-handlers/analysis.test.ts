@@ -1121,6 +1121,125 @@ describe('handleDetectChanges', () => {
     expect(result.changedFunctions[0].name).toBe('doWork');
     expect(result.changedFunctions[0].file).toBe('src/a.ts');
   });
+
+  it('sets testCoverage=none and includes entry in testGaps when function has no test edges', async () => {
+    const git = (...args: string[]) =>
+      spawnSync('git', args, { cwd: tmpDir, encoding: 'utf-8' });
+    git('init', '-q');
+    git('config', 'user.email', 'test@test.dev');
+    git('config', 'user.name', 'Test');
+    const srcDir = join(tmpDir, 'src');
+    await mkdir(srcDir, { recursive: true });
+    const file = join(srcDir, 'b.ts');
+    await writeFile(file, 'export function noTests(): void {\n  console.log(1);\n}\n', 'utf-8');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+    await writeFile(file, 'export function noTests(): void {\n  console.log(2);\n}\n', 'utf-8');
+
+    readCachedContext.mockResolvedValue({
+      callGraph: makeCallGraph({
+        nodes: [{
+          id: 'src/b.ts::noTests', name: 'noTests', filePath: 'src/b.ts',
+          language: 'typescript', fanIn: 2, fanOut: 0, startLine: 1, endLine: 3,
+          isExternal: false, isTest: false,
+        }],
+      }),
+    });
+
+    const { handleDetectChanges } = await import('./analysis.js');
+    const result = await handleDetectChanges(tmpDir) as {
+      changedFunctions: Array<{ name: string; testCoverage: string }>;
+      testGaps: Array<{ name: string; file: string; riskScore: number; changeType: string }>;
+    };
+
+    expect(result.changedFunctions[0].testCoverage).toBe('none');
+    expect(result.testGaps).toHaveLength(1);
+    expect(result.testGaps[0].name).toBe('noTests');
+    expect(result.testGaps[0].file).toBe('src/b.ts');
+    expect(typeof result.testGaps[0].riskScore).toBe('number');
+  });
+
+  it('sets testCoverage=import-only when only import test edges exist and excludes from testGaps', async () => {
+    const git = (...args: string[]) =>
+      spawnSync('git', args, { cwd: tmpDir, encoding: 'utf-8' });
+    git('init', '-q');
+    git('config', 'user.email', 'test@test.dev');
+    git('config', 'user.name', 'Test');
+    const srcDir = join(tmpDir, 'src');
+    await mkdir(srcDir, { recursive: true });
+    const file = join(srcDir, 'c.ts');
+    await writeFile(file, 'export function wellTested(): void {\n  console.log(1);\n}\n', 'utf-8');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+    await writeFile(file, 'export function wellTested(): void {\n  console.log(2);\n}\n', 'utf-8');
+
+    readCachedContext.mockResolvedValue({
+      callGraph: makeCallGraph({
+        nodes: [{
+          id: 'src/c.ts::wellTested', name: 'wellTested', filePath: 'src/c.ts',
+          language: 'typescript', fanIn: 1, fanOut: 0, startLine: 1, endLine: 3,
+          isExternal: false, isTest: false,
+        }],
+        edges: [{
+          callerId: 'src/c.ts::wellTested',
+          calleeId: 'src/c.test.ts::wellTested.test',
+          calleeName: 'wellTested.test',
+          confidence: 'import',
+          kind: 'tested_by',
+        }],
+      }),
+    });
+
+    const { handleDetectChanges } = await import('./analysis.js');
+    const result = await handleDetectChanges(tmpDir) as {
+      changedFunctions: Array<{ name: string; testCoverage: string }>;
+      testGaps: Array<unknown>;
+    };
+
+    expect(result.changedFunctions[0].testCoverage).toBe('import-only');
+    expect(result.testGaps).toHaveLength(0);
+  });
+
+  it('sets testCoverage=direct when a called (non-import) test edge exists', async () => {
+    const git = (...args: string[]) =>
+      spawnSync('git', args, { cwd: tmpDir, encoding: 'utf-8' });
+    git('init', '-q');
+    git('config', 'user.email', 'test@test.dev');
+    git('config', 'user.name', 'Test');
+    const srcDir = join(tmpDir, 'src');
+    await mkdir(srcDir, { recursive: true });
+    const file = join(srcDir, 'd.ts');
+    await writeFile(file, 'export function directlyCovered(): void {\n  return;\n}\n', 'utf-8');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+    await writeFile(file, 'export function directlyCovered(): void {\n  return undefined;\n}\n', 'utf-8');
+
+    readCachedContext.mockResolvedValue({
+      callGraph: makeCallGraph({
+        nodes: [{
+          id: 'src/d.ts::directlyCovered', name: 'directlyCovered', filePath: 'src/d.ts',
+          language: 'typescript', fanIn: 1, fanOut: 0, startLine: 1, endLine: 3,
+          isExternal: false, isTest: false,
+        }],
+        edges: [{
+          callerId: 'src/d.ts::directlyCovered',
+          calleeId: 'src/d.test.ts::it',
+          calleeName: 'it',
+          confidence: 'same_file', // non-'import' → maps to 'called' → testCoverage='direct'
+          kind: 'tested_by',
+        }],
+      }),
+    });
+
+    const { handleDetectChanges } = await import('./analysis.js');
+    const result = await handleDetectChanges(tmpDir) as {
+      changedFunctions: Array<{ name: string; testCoverage: string }>;
+      testGaps: Array<unknown>;
+    };
+
+    expect(result.changedFunctions[0].testCoverage).toBe('direct');
+    expect(result.testGaps).toHaveLength(0);
+  });
 });
 
 // ============================================================================

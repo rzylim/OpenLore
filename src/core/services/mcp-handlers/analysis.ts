@@ -1391,6 +1391,9 @@ export async function handleDetectChanges(
     const changeType = classifyChangeType(n, changedFileData.get(relPath(n.filePath))?.addedLines ?? new Map());
     const changeScore = Math.min(rawChangeScore * CHANGE_TYPE_MULTIPLIER[changeType], 1);
     const tests = testedByMap.get(id) ?? [];
+    const testCoverage: 'none' | 'import-only' | 'direct' =
+      tests.length === 0 ? 'none' :
+      tests.some(t => t.confidence === 'called') ? 'direct' : 'import-only';
     // called-edges are direct proof; imported-only is weaker (survives vi.mock)
     const effectiveTests = tests.reduce((s, t) => s + (t.confidence === 'called' ? 1.0 : 0.3), 0);
     const coveragePenalty = 1 / (1 + Math.log(1 + effectiveTests));
@@ -1414,13 +1417,19 @@ export async function handleDetectChanges(
       changeType,
       riskScore,
       reason,
+      testCoverage,
       testedBy: testedByMap.get(id) ?? [],
     };
   }).sort((a, b) => b.riskScore - a.riskScore);
+
+  const testGaps = scored
+    .filter(f => f.testCoverage === 'none')
+    .map(f => ({ name: f.name, file: f.file, riskScore: f.riskScore, changeType: f.changeType }));
 
   return {
     base: ref,
     totalChanged: scored.length,
     changedFunctions: scored,
+    testGaps,
   };
 }
