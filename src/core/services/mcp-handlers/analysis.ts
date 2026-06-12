@@ -573,10 +573,16 @@ export async function handleGetRouteInventory(
   // Try reading cached artifact first
   try {
     const raw = await readFile(artifactPath, 'utf-8');
-    const inventory = JSON.parse(raw) as Record<string, unknown>;
-    return { cached: true, ...inventory };
+    const inventory = JSON.parse(raw);
+    // Untrusted artifact: only serve it if the top-level shape is a plain object;
+    // a malformed/poisoned artifact falls through to live re-extraction instead of
+    // being spread into the result (mcp-security: fail closed, no attacker shape).
+    if (inventory === null || typeof inventory !== 'object' || Array.isArray(inventory)) {
+      throw new Error('malformed cached route inventory');
+    }
+    return { cached: true, ...(inventory as Record<string, unknown>) };
   } catch {
-    // Artifact not present — run live extraction
+    // Artifact not present or malformed — run live extraction
   }
 
   const { buildRouteInventory } = await import('../../analyzer/http-route-parser.js');
@@ -614,10 +620,11 @@ export async function handleGetMiddlewareInventory(
   // Try reading cached artifact first
   try {
     const raw = await readFile(artifactPath, 'utf-8');
-    const inventory = JSON.parse(raw) as unknown[];
+    const inventory = JSON.parse(raw);
+    if (!Array.isArray(inventory)) throw new Error('malformed cached middleware inventory');
     return { cached: true, total: inventory.length, entries: inventory };
   } catch {
-    // Artifact not present — run live extraction
+    // Artifact not present or malformed — run live extraction
   }
 
   const { extractMiddleware } = await import('../../analyzer/middleware-extractor.js');
@@ -654,10 +661,11 @@ export async function handleGetSchemaInventory(
 
   try {
     const raw = await readFile(artifactPath, 'utf-8');
-    const schemas = JSON.parse(raw) as unknown[];
+    const schemas = JSON.parse(raw);
+    if (!Array.isArray(schemas)) throw new Error('malformed cached schema inventory');
     return { cached: true, total: schemas.length, schemas };
   } catch {
-    // Artifact not present — run live extraction
+    // Artifact not present or malformed — run live extraction
   }
 
   const { extractSchemas } = await import('../../analyzer/schema-extractor.js');
@@ -694,10 +702,11 @@ export async function handleGetUIComponents(
 
   try {
     const raw = await readFile(artifactPath, 'utf-8');
-    const components = JSON.parse(raw) as unknown[];
+    const components = JSON.parse(raw);
+    if (!Array.isArray(components)) throw new Error('malformed cached UI inventory');
     return { cached: true, total: components.length, components };
   } catch {
-    // Artifact not present — run live extraction
+    // Artifact not present or malformed — run live extraction
   }
 
   const { extractUIComponents } = await import('../../analyzer/ui-component-extractor.js');
@@ -734,10 +743,11 @@ export async function handleGetEnvVars(
 
   try {
     const raw = await readFile(artifactPath, 'utf-8');
-    const envVars = JSON.parse(raw) as unknown[];
+    const envVars = JSON.parse(raw);
+    if (!Array.isArray(envVars)) throw new Error('malformed cached env inventory');
     return { cached: true, total: envVars.length, envVars };
   } catch {
-    // Artifact not present — run live extraction
+    // Artifact not present or malformed — run live extraction
   }
 
   const { extractEnvVars } = await import('../../analyzer/env-extractor.js');
@@ -775,9 +785,12 @@ export async function handleGetExternalPackages(
 
   try {
     const raw = await readFile(artifactPath, 'utf-8');
-    const result = JSON.parse(raw) as Record<string, unknown>;
-    return { cached: true, ...result };
-  } catch { /* not cached */ }
+    const result = JSON.parse(raw);
+    if (result === null || typeof result !== 'object' || Array.isArray(result)) {
+      throw new Error('malformed cached external-packages inventory');
+    }
+    return { cached: true, ...(result as Record<string, unknown>) };
+  } catch { /* not cached or malformed — run live extraction */ }
 
   const { extractExternalPackages } = await import('../../analyzer/external-packages.js');
   const result = await extractExternalPackages(absDir);
