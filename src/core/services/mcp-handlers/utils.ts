@@ -4,7 +4,8 @@
 
 import { createHash } from 'node:crypto';
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { extname, join, relative, resolve, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { LLMContext } from '../../analyzer/artifact-generator.js';
 import { EdgeStore } from '../edge-store.js';
 import { ANALYSIS_STALE_THRESHOLD_MS, ARTIFACT_FINGERPRINT, ARTIFACT_LLM_CONTEXT, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR } from '../../../constants.js';
@@ -95,14 +96,50 @@ export function sanitizeMcpError(err: unknown, format: 'string' | 'json' = 'stri
 }
 
 /**
- * Resolve a user-supplied relative file path against a validated project root
- * and ensure the result stays within that root. Prevents path traversal via
- * `../` sequences.
+ * The canonical (symlink-resolved) path of `p`, or — when `p` does not exist (a
+ * write target) — the canonical path of its nearest existing ancestor. Used to
+ * confine on the REAL filesystem location rather than the lexical path.
+ */
+function realPathOrNearestExisting(p: string): string {
+  let cur = p;
+  for (;;) {
+    try {
+      return realpathSync(cur);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      const parent = dirname(cur);
+      if (parent === cur) return cur; // reached filesystem root
+      cur = parent;
+    }
+  }
+}
+
+/**
+ * Resolve a user-supplied relative file path against a validated project root and
+ * ensure the result stays within that root — by BOTH a lexical check (cheap, blocks
+ * `../` traversal) AND a canonical, symlink-resolved check (mcp-security:
+ * Symlink-Aware Path Confinement). The canonical check defeats an in-root symlink
+ * that points outside the root: confinement is enforced on the real path of the
+ * target where it exists, and on the real path of its nearest existing ancestor
+ * where it does not (so a not-yet-created write target is confined too).
  */
 export function safeJoin(absDir: string, filePath: string): string {
   const resolved = resolve(absDir, filePath);
   if (!resolved.startsWith(absDir + sep) && resolved !== absDir) {
     throw new Error(`Path traversal blocked: "${filePath}" resolves outside project directory`);
+  }
+  // Canonical (symlink-aware) confinement. realpath the root (it exists — it was
+  // validated) and the target's real location; reject if the real target escapes.
+  try {
+    const realRoot = realpathSync(absDir);
+    const realTarget = realPathOrNearestExisting(resolved);
+    if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) {
+      throw new Error(`Path escape blocked: "${filePath}" canonicalizes outside the project directory`);
+    }
+  } catch (err) {
+    // A "Path escape blocked" error must propagate; only swallow realpath I/O errors
+    // on the root itself (which would be unexpected for a validated root).
+    if (err instanceof Error && err.message.startsWith('Path escape blocked')) throw err;
   }
   return resolved;
 }

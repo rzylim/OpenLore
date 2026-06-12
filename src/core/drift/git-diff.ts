@@ -154,9 +154,23 @@ export async function getCurrentBranch(rootPath: string): Promise<string> {
  * Validate a user-supplied git ref to prevent unexpected git argument injection.
  * Allows branch/tag names, SHA hashes, relative refs (HEAD~1, @{upstream}), and
  * the empty-tree SHA. Rejects refs containing shell metacharacters or null bytes.
+ *
+ * Argument-injection guard (mcp-security: Subprocess Argument Safety): a ref is
+ * always passed to git as a single argv element, which prevents shell injection but
+ * NOT flag interpretation — `--upload-pack=...` or `--output=x` would still be read
+ * by git as an OPTION. Real refs/branches/SHAs never begin with `-`, so a
+ * leading-dash ref is rejected outright; this is the validation half of the spec's
+ * "`--` separator OR allowlist" requirement (ref operands are also placed after `--`
+ * at the call sites where git supports it).
  */
 export function validateGitRef(ref: string): void {
   if (ref === GIT_EMPTY_TREE_SHA || ref === 'auto') return;
+  if (typeof ref !== 'string' || ref.length === 0) {
+    throw new Error('Invalid git ref: must be a non-empty string.');
+  }
+  if (ref.startsWith('-')) {
+    throw new Error(`Invalid git ref: "${ref}". A ref must not begin with "-" (argument-injection guard).`);
+  }
   // Allow: alphanumeric, -, _, ., /, ~, ^, @, {, }, :
   if (!/^[\w\-./~^@{}:]+$/.test(ref)) {
     throw new Error(`Invalid git ref: "${ref}". Refs must contain only alphanumeric characters and -_./ ~^@{}:`);
@@ -284,6 +298,7 @@ export async function getFileDiff(
   baseRef: string,
   maxChars: number = DIFF_MAX_CHARS,
 ): Promise<string> {
+  validateGitRef(baseRef); // argument-injection guard before interpolating into a git rev range
   // Try three-dot diff first (merge-base), fall back to two-dot
   for (const separator of ['...', '..']) {
     try {
@@ -326,6 +341,7 @@ export async function getFileDiff(
  * Returns empty string if no commits or git fails.
  */
 export async function getCommitMessages(rootPath: string, baseRef: string): Promise<string> {
+  validateGitRef(baseRef); // argument-injection guard before interpolating into a git rev range
   for (const separator of ['...', '..']) {
     try {
       const { stdout } = await execFileAsync(
