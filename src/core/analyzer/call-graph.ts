@@ -889,12 +889,16 @@ function extractDeclaration(
 function buildCfgFor(fnNode: Parser.SyntaxNode, language: string): FunctionCfg | undefined {
   let target = fnNode;
   if (!fnNode.childForFieldName('body')) {
-    // Dig (breadth-first) for an arrow/function-expression that owns a body.
+    // Dig (breadth-first) for the node that actually owns the body: a TS arrow/
+    // function-expression assigned to a variable, or — crucially — the inner
+    // `function_definition` of a Python `@decorator`'d function, whose captured
+    // node is the `decorated_definition` wrapper (no `body` field of its own).
     const stack = [...fnNode.namedChildren];
     while (stack.length) {
       const n = stack.shift()!;
       if (
-        (n.type === 'arrow_function' || n.type === 'function_expression' || n.type === 'function') &&
+        (n.type === 'arrow_function' || n.type === 'function_expression' ||
+         n.type === 'function' || n.type === 'function_definition') &&
         n.childForFieldName('body')
       ) { target = n; break; }
       stack.push(...n.namedChildren);

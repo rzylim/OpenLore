@@ -75,6 +75,32 @@ describe('CFG overlay storage', () => {
     }
   });
 
+  it('builds overlays for decorated Python functions (@property/@cached_property)', async () => {
+    // The fn query binds @fn.node to the `decorated_definition` wrapper, which has
+    // no `body` field; buildCfgFor must descend to the inner `function_definition`.
+    const PY_DECO = [
+      'class Service:',
+      '    @property',
+      '    def value(self):',
+      '        x = self.compute()',
+      '        return x + 1',
+      '',
+      '    def plain(self, a):',
+      '        return a * 2',
+    ].join('\n');
+    const { dbPath } = await buildAndStore(dir, [{ path: 'm.py', content: PY_DECO, language: 'Python' }]);
+    const store = EdgeStore.open(dbPath);
+    try {
+      const decorated = store.getCfg('m.py::Service.value');
+      expect(decorated, 'decorated function must have an overlay').toBeTruthy();
+      expect(decorated!.params).toContain('self');
+      expect(decorated!.defUse.some(e => e.variable === 'x')).toBe(true);
+      expect(store.getCfg('m.py::Service.plain')).toBeTruthy();
+    } finally {
+      store.close();
+    }
+  });
+
   it('Overlay is not in the resident serialized graph', async () => {
     const { serialized } = await buildAndStore(dir, [{ path: 'a.ts', content: TS_SRC, language: 'TypeScript' }]);
     // The resident shape carries nodes/edges/classes but no CFG/def-use overlay.
