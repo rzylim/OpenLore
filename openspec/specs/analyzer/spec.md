@@ -5074,3 +5074,13 @@ Dogfooding the overlay on real TS found three soundness/precision bugs: (1) try/
 The exact precision label is the load-bearing safety signal an agent trusts; a wrong exact is actively harmful context. Two unsound-exact holes were found by adversarial probing: (1) a local scalar reassigned inside a nested closure that is then invoked — the value at a later read is not necessarily the visible def; (2) a Go local whose address is taken (&x) and mutated through the pointer. Fix: a pre-pass (collectEscapedVars) collects names assigned inside any nested closure (excluding the closure's own params/locals) and names whose address is taken, and computeReachingDefs forces precision may for any edge whose variable escaped. The set is deliberately over-approximated because a false inclusion only weakens precision (more may), never produces an unsound exact. Read-only closure captures are NOT downgraded (verified), preserving precision.
 
 **Consequences:** exact now means soundly exact for the supported languages: a local-scalar def-use with no aliasing, closure mutation, or address-of. This makes the overlay safe for agents to trust the exact label. collectEscapedVars adds one linear pre-pass per function.
+
+### Add lexical scope resolution to the def-use overlay so shadowed variables never conflate
+
+**Status:** Approved
+**Date:** 2026-06-12
+**ID:** 84cc2af4
+
+Two parallel adversarial audits (real-repo stress + soundness review) found that name-based reaching-defs conflated shadowed variables, producing unsound exact edges: an inner block let/const/:= (TS/Go) or a comprehension loop var (Python) reached an outer same-named use as exact, and dropped the correct outer def. Fix: a resolveScopes pre-pass maps every identifier occurrence to a scope-qualified key (name#scopeId) — nearest enclosing scope that declares the name, else root (params/globals). Reaching-defs keys GEN/KILL/reach by the scoped key while emitting the bare name. Scopes open at: nested functions, comprehensions (Python), catch clauses, and (block-scoped langs only) every block and loop header. Also fixed: x++/x-- recorded as use+def (and as closure mutation), Go closure-escape descending expression_list LHS + inc/dec + address-of inside closures, Python try/else as the no-exception continuation, and labeled-statement unwrapping so labeled loops keep their back-edge.
+
+**Consequences:** CfgLangSpec gains blockScoped, comprehensionTypes, updateTypes. Op/DefSite gain a scope key. exact now holds across shadowing for TS/JS/Python/Go. Verified deterministic on real repos with 0 invariant violations across 1596 overlays; ~90% exact / 10% may edge ratio.

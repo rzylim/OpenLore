@@ -80,6 +80,7 @@ export interface FunctionCfg {
 export interface CfgNode {
   type: string;
   text: string;
+  startIndex: number;
   startPosition: { row: number };
   namedChildren: CfgNode[];
   children: CfgNode[];
@@ -105,6 +106,12 @@ interface CfgLangSpec {
   /** True for C-style switch where a case without `break` falls into the next
    *  (TS/JS); false where each case auto-breaks (Go switch, Python match). */
   switchFallsThrough: boolean;
+  /** True when nested `{ }` blocks introduce a new variable scope (TS/JS `let`/
+   *  `const`, Go `:=`) — enables shadowing detection. False for Python (function
+   *  scope; its shadowing comes from comprehensions/closures, handled separately). */
+  blockScoped: boolean;
+  /** Comprehension node types that introduce their own scope (Python). */
+  comprehensionTypes: Set<string>;
   /** Early-exit statement node types. */
   returnTypes: Set<string>;
   breakTypes: Set<string>;
@@ -128,6 +135,8 @@ interface CfgLangSpec {
   identTypes: Set<string>;
   /** Call-expression node types (used to skip the callee name as a use). */
   callTypes: Set<string>;
+  /** Increment/decrement node types (`x++`/`x--`) — a combined use+def of the operand. */
+  updateTypes: Set<string>;
   /** Field name for the condition of an if/loop, when present. */
   conditionField: string;
   /** Field names for an if's then / else branches. */
@@ -149,6 +158,8 @@ const TS_SPEC: CfgLangSpec = {
   switchTypes: new Set(['switch_statement']),
   nestedFnTypes: new Set(['arrow_function', 'function_expression', 'function_declaration', 'generator_function', 'generator_function_declaration', 'method_definition']),
   switchFallsThrough: true,
+  blockScoped: true,
+  comprehensionTypes: new Set([]),
   returnTypes: new Set(['return_statement']),
   breakTypes: new Set(['break_statement']),
   continueTypes: new Set(['continue_statement']),
@@ -162,6 +173,7 @@ const TS_SPEC: CfgLangSpec = {
   subscriptTypes: new Set(['subscript_expression']),
   identTypes: new Set(['identifier', 'shorthand_property_identifier']),
   callTypes: new Set(['call_expression', 'new_expression']),
+  updateTypes: new Set(['update_expression']),
   conditionField: 'condition',
   consequenceField: 'consequence',
   alternativeField: 'alternative',
@@ -178,6 +190,8 @@ const PY_SPEC: CfgLangSpec = {
   switchTypes: new Set(['match_statement']),
   nestedFnTypes: new Set(['lambda', 'function_definition']),
   switchFallsThrough: false,
+  blockScoped: false,
+  comprehensionTypes: new Set(['list_comprehension', 'set_comprehension', 'dictionary_comprehension', 'generator_expression']),
   returnTypes: new Set(['return_statement']),
   breakTypes: new Set(['break_statement']),
   continueTypes: new Set(['continue_statement']),
@@ -191,6 +205,7 @@ const PY_SPEC: CfgLangSpec = {
   subscriptTypes: new Set(['subscript']),
   identTypes: new Set(['identifier']),
   callTypes: new Set(['call']),
+  updateTypes: new Set([]),
   conditionField: 'condition',
   consequenceField: 'consequence',
   alternativeField: 'alternative',
@@ -207,6 +222,8 @@ const GO_SPEC: CfgLangSpec = {
   switchTypes: new Set(['expression_switch_statement', 'type_switch_statement']),
   nestedFnTypes: new Set(['func_literal', 'function_declaration', 'method_declaration']),
   switchFallsThrough: false,
+  blockScoped: true,
+  comprehensionTypes: new Set([]),
   returnTypes: new Set(['return_statement']),
   breakTypes: new Set(['break_statement']),
   continueTypes: new Set(['continue_statement']),
@@ -220,6 +237,7 @@ const GO_SPEC: CfgLangSpec = {
   subscriptTypes: new Set(['index_expression']),
   identTypes: new Set(['identifier', 'field_identifier']),
   callTypes: new Set(['call_expression']),
+  updateTypes: new Set(['inc_statement', 'dec_statement']),
   conditionField: 'condition',
   consequenceField: 'consequence',
   alternativeField: 'alternative',
@@ -251,11 +269,14 @@ interface InternalBlock extends CfgBlock {
 }
 
 type Op =
+  // `variable` is the source name (for display / value-level matching); `key` is
+  // the scope-resolved identity (`name#scopeId`) used by reaching-defs so that a
+  // shadowed inner declaration never conflates with the outer same-named var.
   // `weak` defs (logical-assignment `||=`/`&&=`/`??=`, which assign only
   // conditionally) do NOT kill prior defs — the old value can survive, so both
   // reach a later use.
-  | { op: 'def'; variable: string; line: number; precision: DataFlowPrecision; seq?: number; weak?: boolean }
-  | { op: 'use'; variable: string; line: number; precision: DataFlowPrecision };
+  | { op: 'def'; variable: string; key: string; line: number; precision: DataFlowPrecision; seq?: number; weak?: boolean }
+  | { op: 'use'; variable: string; key: string; line: number; precision: DataFlowPrecision };
 
 interface LoopCtx {
   continueTarget: number;
@@ -268,9 +289,15 @@ class CfgBuilder {
   readonly ENTRY: number;
   readonly EXIT: number;
 
-  constructor(private readonly spec: CfgLangSpec) {
+  /** identifier startIndex → scope-resolved key (`name#scopeId`). */
+  constructor(private readonly spec: CfgLangSpec, private readonly scopeKeys: Map<number, string> = new Map()) {
     this.ENTRY = this.newBlock('entry');
     this.EXIT = this.newBlock('exit');
+  }
+
+  /** Scope-resolved key for an identifier occurrence; falls back to the bare name. */
+  private keyFor(node: CfgNode, name: string): string {
+    return this.scopeKeys.get(node.startIndex) ?? `${name}#0`;
   }
 
   /**
@@ -321,6 +348,15 @@ class CfgBuilder {
   private processStmt(stmt: CfgNode, current: number, loop: LoopCtx | null): number | null {
     const t = stmt.type;
     const { spec } = this;
+
+    // `label: <stmt>` — unwrap so a labeled loop is still processed as a loop.
+    // (A labeled break/continue still targets the innermost loop; label-precise
+    // targeting is a known minor over-approximation.)
+    if (t === 'labeled_statement') {
+      const inner = stmt.childForFieldName('body') ?? stmt.namedChildren[stmt.namedChildren.length - 1];
+      if (inner && inner !== stmt) return this.processStmt(inner, current, loop);
+      return current;
+    }
 
     if (spec.ifTypes.has(t)) return this.processIf(stmt, current, loop);
     if (spec.loopTypes.has(t)) return this.processLoop(stmt, current, loop);
@@ -463,8 +499,17 @@ class CfgBuilder {
     this.addEdge(current, tryBlock, 'true');
     const tryExit = tryBody ? this.processSeq(this.stmtChildren(tryBody), tryBlock, loop) : tryBlock;
 
+    // Python `try ... else:` runs on the NO-exception path, after the try body
+    // completes — so the normal path continues through it before the join.
+    let normalExit = tryExit;
+    const elseClause = stmt.namedChildren.find(c => c.type === 'else_clause');
+    if (elseClause && normalExit !== null) {
+      const elseBody = elseClause.childForFieldName(spec.bodyField) ?? elseClause.namedChildren.find(c => spec.blockTypes.has(c.type));
+      normalExit = elseBody ? this.processSeq(this.stmtChildren(elseBody), normalExit, loop) : normalExit;
+    }
+
     const merge = this.newBlock('merge');
-    if (tryExit !== null) this.addEdge(tryExit, merge, 'normal');
+    if (normalExit !== null) this.addEdge(normalExit, merge, 'normal');
 
     // Each catch/except clause is an alternative path from `current`.
     let sawCatch = false;
@@ -476,10 +521,10 @@ class CfgBuilder {
       // The bound exception variable is a definition (TS `catch (e)`, Py `except X as e`).
       const param = clause.childForFieldName('parameter');
       if (param && spec.identTypes.has(param.type)) {
-        this.block(catchBlock).ops.push({ op: 'def', variable: param.text, line: param.startPosition.row + 1, precision: 'exact' });
+        this.block(catchBlock).ops.push({ op: 'def', variable: param.text, key: this.keyFor(param, param.text), line: param.startPosition.row + 1, precision: 'exact' });
       } else {
         const asName = clause.namedChildren.find(c => spec.identTypes.has(c.type));
-        if (asName) this.block(catchBlock).ops.push({ op: 'def', variable: asName.text, line: asName.startPosition.row + 1, precision: 'may' });
+        if (asName) this.block(catchBlock).ops.push({ op: 'def', variable: asName.text, key: this.keyFor(asName, asName.text), line: asName.startPosition.row + 1, precision: 'may' });
       }
       const catchBody = clause.childForFieldName(spec.bodyField) ?? clause.namedChildren.find(c => spec.blockTypes.has(c.type));
       const catchExit = catchBody ? this.processSeq(this.stmtChildren(catchBody), catchBlock, loop) : catchBlock;
@@ -577,7 +622,7 @@ class CfgBuilder {
           const key = `${n.text}|${n.startPosition.row + 1}`;
           if (!seen.has(key)) {
             seen.add(key);
-            this.block(block).ops.push({ op: 'use', variable: n.text, line: n.startPosition.row + 1, precision: 'may' });
+            this.block(block).ops.push({ op: 'use', variable: n.text, key: this.keyFor(n, n.text), line: n.startPosition.row + 1, precision: 'may' });
           }
         }
         return;
@@ -598,6 +643,8 @@ class CfgBuilder {
           if (this.spec.declTypes.has(child.type)) this.recordDeclaration(child, block);
           else this.recordStmt(child, block);
         }
+      } else if (this.spec.updateTypes.has(node.type)) {
+        this.recordUpdate(node, block);
       } else if (this.spec.assignTypes.has(node.type)) {
         this.recordAssignment(node, block, false);
       } else if (this.spec.augAssignTypes.has(node.type)) {
@@ -614,6 +661,17 @@ class CfgBuilder {
   /** A return/throw value, or any embedded expression, contributes uses. */
   private recordExpr(stmt: CfgNode, block: number): void {
     this.recordUses(stmt, block);
+  }
+
+  /** `x++` / `x--` (and Go `inc_statement`/`dec_statement`): a use of the operand
+   *  followed by a def of it. */
+  private recordUpdate(node: CfgNode, block: number): void {
+    const operand = node.childForFieldName('argument') ?? node.childForFieldName('operand')
+      ?? node.childForFieldName('expression') ?? node.namedChildren[0];
+    if (!operand) return;
+    const line = node.startPosition.row + 1;
+    this.recordUses(operand, block);
+    this.recordTarget(operand, block, line);
   }
 
   private recordAssignment(node: CfgNode, block: number, augmented: boolean): void {
@@ -647,7 +705,7 @@ class CfgBuilder {
       // tree-sitter shapes without named left/right fields (var_spec lists):
       // first identifier child is the def, remaining expressions are uses.
       const idents = node.namedChildren.filter(c => spec.identTypes.has(c.type));
-      for (const id of idents) this.block(block).ops.push({ op: 'def', variable: id.text, line, precision: 'exact' });
+      for (const id of idents) this.block(block).ops.push({ op: 'def', variable: id.text, key: this.keyFor(id, id.text), line, precision: 'exact' });
     }
   }
 
@@ -660,7 +718,7 @@ class CfgBuilder {
     // `shorthand_property_identifier_pattern` (no children), which the generic
     // container recurse below would silently drop.
     if (target.type === 'shorthand_property_identifier_pattern' || target.type === 'shorthand_property_identifier') {
-      this.block(block).ops.push({ op: 'def', variable: target.text, line, precision: 'exact' });
+      this.block(block).ops.push({ op: 'def', variable: target.text, key: this.keyFor(target, target.text), line, precision: 'exact' });
       return;
     }
     // `{ key: binding }` — the value is the binding; the key is a property name.
@@ -690,7 +748,7 @@ class CfgBuilder {
       return;
     }
     if (spec.identTypes.has(target.type)) {
-      this.block(block).ops.push({ op: 'def', variable: target.text, line, precision: 'exact', weak });
+      this.block(block).ops.push({ op: 'def', variable: target.text, key: this.keyFor(target, target.text), line, precision: 'exact', weak });
       return;
     }
     if (spec.memberTypes.has(target.type) || spec.subscriptTypes.has(target.type)) {
@@ -699,9 +757,9 @@ class CfgBuilder {
       // by its source text (e.g. "obj.field").
       const base = target.namedChildren[0];
       if (base && spec.identTypes.has(base.type)) {
-        this.block(block).ops.push({ op: 'use', variable: base.text, line, precision: 'exact' });
+        this.block(block).ops.push({ op: 'use', variable: base.text, key: this.keyFor(base, base.text), line, precision: 'exact' });
       }
-      this.block(block).ops.push({ op: 'def', variable: normalizeLValue(target.text), line, precision: 'may', weak });
+      this.block(block).ops.push({ op: 'def', variable: normalizeLValue(target.text), key: normalizeLValue(target.text), line, precision: 'may', weak });
       return;
     }
     // Anything else (rare): collect identifier defs conservatively.
@@ -743,6 +801,10 @@ class CfgBuilder {
         return;
       }
       // Nested assignment/declaration inside an expression: handle as a statement.
+      if (spec.updateTypes.has(t)) {
+        this.recordUpdate(n, block);
+        return;
+      }
       if (spec.assignTypes.has(t) || spec.augAssignTypes.has(t)) {
         this.recordAssignment(n, block, spec.augAssignTypes.has(t));
         return;
@@ -754,7 +816,7 @@ class CfgBuilder {
         const name = n.childForFieldName('name');
         if (val) visit(val);
         if (name && spec.identTypes.has(name.type)) {
-          this.block(block).ops.push({ op: 'def', variable: name.text, line: name.startPosition.row + 1, precision: 'exact' });
+          this.block(block).ops.push({ op: 'def', variable: name.text, key: this.keyFor(name, name.text), line: name.startPosition.row + 1, precision: 'exact' });
         }
         return;
       }
@@ -762,12 +824,12 @@ class CfgBuilder {
         // obj.field read: base obj is an exact use, the field path is a may use.
         const base = n.namedChildren[0];
         if (base) visit(base);
-        this.block(block).ops.push({ op: 'use', variable: normalizeLValue(n.text), line: n.startPosition.row + 1, precision: 'may' });
+        this.block(block).ops.push({ op: 'use', variable: normalizeLValue(n.text), key: normalizeLValue(n.text), line: n.startPosition.row + 1, precision: 'may' });
         return;
       }
       if (spec.subscriptTypes.has(t)) {
         for (const c of n.namedChildren) visit(c);
-        this.block(block).ops.push({ op: 'use', variable: normalizeLValue(n.text), line: n.startPosition.row + 1, precision: 'may' });
+        this.block(block).ops.push({ op: 'use', variable: normalizeLValue(n.text), key: normalizeLValue(n.text), line: n.startPosition.row + 1, precision: 'may' });
         return;
       }
       if (spec.callTypes.has(t)) {
@@ -780,7 +842,7 @@ class CfgBuilder {
         return;
       }
       if (spec.identTypes.has(t)) {
-        this.block(block).ops.push({ op: 'use', variable: n.text, line: n.startPosition.row + 1, precision: 'exact' });
+        this.block(block).ops.push({ op: 'use', variable: n.text, key: this.keyFor(n, n.text), line: n.startPosition.row + 1, precision: 'exact' });
         return;
       }
       for (const c of n.namedChildren) visit(c);
@@ -852,12 +914,28 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
       for (const c of n.namedChildren) collectBound(c);
     };
     collectBound(fbody);
-    // A plain assignment to a name not bound in this closure mutates the outer scope.
+    // Add the simple-identifier targets of an assignment LHS to `escaped` (skip
+    // member/subscript writes — those rebind a field, not the scalar). Handles
+    // Go's `expression_list` LHS (`x, y = ...`) by descending.
+    const addLeftIdents = (left: CfgNode | null): void => {
+      if (!left) return;
+      if (spec.memberTypes.has(left.type) || spec.subscriptTypes.has(left.type)) return;
+      if (spec.identTypes.has(left.type)) { if (!bound.has(left.text)) escaped.add(left.text); return; }
+      for (const c of left.namedChildren) addLeftIdents(c);
+    };
+    // A mutation (assignment / `x++` / `&x`) of an outer name inside the closure.
     const collectMut = (n: CfgNode): void => {
       if (n !== fnNode && spec.nestedFnTypes.has(n.type)) { collectClosureMutations(n); return; }
       if (spec.assignTypes.has(n.type) || spec.augAssignTypes.has(n.type)) {
-        const left = n.childForFieldName(spec.leftField) ?? n.namedChildren[0];
-        if (left && spec.identTypes.has(left.type) && !bound.has(left.text)) escaped.add(left.text);
+        addLeftIdents(n.childForFieldName(spec.leftField) ?? n.namedChildren[0]);
+      }
+      if (n.type === 'update_expression' || n.type === 'inc_statement' || n.type === 'dec_statement') {
+        const arg = n.childForFieldName('argument') ?? n.childForFieldName('operand') ?? n.namedChildren[0];
+        if (arg && spec.identTypes.has(arg.type) && !bound.has(arg.text)) escaped.add(arg.text);
+      }
+      if (n.type === 'unary_expression') {
+        const op = n.childForFieldName('operator'), operand = n.childForFieldName('operand');
+        if (op?.text === '&' && operand && spec.identTypes.has(operand.type) && !bound.has(operand.text)) escaped.add(operand.text);
       }
       for (const c of n.namedChildren) collectMut(c);
     };
@@ -885,6 +963,8 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
 /** A definition site identity within one function: variable + line. */
 interface DefSite {
   variable: string;
+  /** Scope-resolved identity (`name#scopeId`) — the key reaching-defs groups by. */
+  key: string;
   line: number;
   precision: DataFlowPrecision;
   /** Block where the def lives (for GEN/KILL bookkeeping). */
@@ -913,7 +993,8 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
   const allDefs: DefSite[] = [];
   let seq = 0;
   for (const p of params) {
-    allDefs.push({ variable: p, line: paramLine, precision: 'exact', block: builder.ENTRY, seq: seq++, weak: false });
+    // Params live in the function's root scope (id 0) — uses resolve to `name#0`.
+    allDefs.push({ variable: p, key: `${p}#0`, line: paramLine, precision: 'exact', block: builder.ENTRY, seq: seq++, weak: false });
   }
   // Per-block ordered def sites (entry block also carries param defs first).
   const blockDefSites: DefSite[][] = Array.from({ length: n }, () => []);
@@ -921,7 +1002,7 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
   for (const b of blocks) {
     for (const op of b.ops) {
       if (op.op === 'def') {
-        const site: DefSite = { variable: op.variable, line: op.line, precision: op.precision, block: b.id, seq: seq++, weak: op.weak ?? false };
+        const site: DefSite = { variable: op.variable, key: op.key, line: op.line, precision: op.precision, block: b.id, seq: seq++, weak: op.weak ?? false };
         op.seq = site.seq; // back-reference so the wiring pass can find this def's seq
         allDefs.push(site);
         blockDefSites[b.id].push(site);
@@ -929,12 +1010,13 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
     }
   }
 
-  // Index defs by variable for KILL.
+  // Index defs by scope-resolved key for KILL (so a shadowed inner `x` never
+  // kills the outer `x`).
   const defsByVar = new Map<string, DefSite[]>();
   for (const d of allDefs) {
-    const arr = defsByVar.get(d.variable) ?? [];
+    const arr = defsByVar.get(d.key) ?? [];
     arr.push(d);
-    defsByVar.set(d.variable, arr);
+    defsByVar.set(d.key, arr);
   }
 
   // GEN[b]: defs generated in b that survive to its end. A STRONG def of v
@@ -947,10 +1029,10 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
     const liveByVar = new Map<string, Set<number>>();
     const stronglyDefined = new Set<string>();
     for (const d of blockDefSites[b]) {
-      const cur = liveByVar.get(d.variable) ?? new Set<number>();
+      const cur = liveByVar.get(d.key) ?? new Set<number>();
       if (d.weak) { cur.add(d.seq); }            // accumulate — old in-block defs survive
-      else { cur.clear(); cur.add(d.seq); stronglyDefined.add(d.variable); } // replace
-      liveByVar.set(d.variable, cur);
+      else { cur.clear(); cur.add(d.seq); stronglyDefined.add(d.key); } // replace
+      liveByVar.set(d.key, cur);
     }
     for (const set of liveByVar.values()) for (const s of set) gen[b].add(s);
     for (const v of stronglyDefined) {
@@ -991,11 +1073,11 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
     const reaching = new Map<string, Set<number>>();
     for (const s of inSet[b]) {
       const d = defBySeq.get(s)!;
-      (reaching.get(d.variable) ?? reaching.set(d.variable, new Set()).get(d.variable)!).add(s);
+      (reaching.get(d.key) ?? reaching.set(d.key, new Set()).get(d.key)!).add(s);
     }
     for (const op of blocks[b].ops) {
       if (op.op === 'use') {
-        const defs = reaching.get(op.variable);
+        const defs = reaching.get(op.key);
         if (defs) {
           for (const s of defs) {
             const d = defBySeq.get(s)!;
@@ -1004,9 +1086,9 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
             // changed outside the visible control flow, so its dependence is `may`.
             const precision: DataFlowPrecision =
               (d.precision === 'may' || op.precision === 'may' || escaped.has(op.variable)) ? 'may' : 'exact';
-            const key = `${op.variable}|${d.line}|${op.line}|${precision}`;
-            if (!emitted.has(key)) {
-              emitted.add(key);
+            const ekey = `${op.variable}|${d.line}|${op.line}|${precision}`;
+            if (!emitted.has(ekey)) {
+              emitted.add(ekey);
               edges.push({ variable: op.variable, defLine: d.line, useLine: op.line, precision });
             }
           }
@@ -1014,10 +1096,10 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
       } else if (op.seq !== undefined) {
         if (op.weak) {
           // Conditional assignment: the new def joins the prior reaching defs.
-          (reaching.get(op.variable) ?? reaching.set(op.variable, new Set()).get(op.variable)!).add(op.seq);
+          (reaching.get(op.key) ?? reaching.set(op.key, new Set()).get(op.key)!).add(op.seq);
         } else {
           // A strong def replaces (kills) all prior reaching defs of that variable.
-          reaching.set(op.variable, new Set([op.seq]));
+          reaching.set(op.key, new Set([op.seq]));
         }
       }
     }
@@ -1042,6 +1124,92 @@ function setEq(a: Set<number>, b: Set<number>): boolean {
 // PUBLIC ENTRY POINT
 // ============================================================================
 
+// ============================================================================
+// LEXICAL SCOPE RESOLUTION
+// ============================================================================
+
+/** Collect the identifier leaves bound by a target pattern (skips object-pattern keys). */
+function collectIdentLeaves(node: CfgNode, spec: CfgLangSpec, into: Set<string>): void {
+  if (spec.identTypes.has(node.type) || node.type === 'shorthand_property_identifier_pattern' || node.type === 'shorthand_property_identifier') {
+    into.add(node.text); return;
+  }
+  if (node.type === 'pair_pattern') {
+    const v = node.childForFieldName('value') ?? node.namedChildren[node.namedChildren.length - 1];
+    if (v) collectIdentLeaves(v, spec, into);
+    return;
+  }
+  for (const c of node.namedChildren) collectIdentLeaves(c, spec, into);
+}
+
+/** Names bound by a single declaration node (variable_declarator / short_var_declaration / var_spec). */
+function collectDeclNames(node: CfgNode, spec: CfgLangSpec, into: Set<string>): void {
+  const name = node.childForFieldName('name') ?? node.childForFieldName(spec.leftField);
+  if (name) { collectIdentLeaves(name, spec, into); return; }
+  for (const c of node.namedChildren) if (spec.identTypes.has(c.type)) into.add(c.text);
+}
+
+/** Does this node open a new lexical scope (in the given language)? */
+function opensScope(n: CfgNode, spec: CfgLangSpec): boolean {
+  if (spec.nestedFnTypes.has(n.type) || spec.comprehensionTypes.has(n.type)) return true;
+  if (n.type === 'catch_clause' || n.type === 'except_clause') return true;
+  if (spec.blockScoped && (spec.blockTypes.has(n.type) || spec.loopTypes.has(n.type))) return true;
+  return false;
+}
+
+/** Names a scope-opening node declares directly (without crossing into deeper scopes). */
+function scopeDeclaredNames(scopeNode: CfgNode, spec: CfgLangSpec): Set<string> {
+  const names = new Set<string>();
+  if (spec.nestedFnTypes.has(scopeNode.type)) for (const p of extractParamNames(scopeNode, spec)) names.add(p);
+  if (scopeNode.type === 'catch_clause' || scopeNode.type === 'except_clause') {
+    const param = scopeNode.childForFieldName('parameter');
+    if (param) collectIdentLeaves(param, spec, names);
+    else { const as = scopeNode.namedChildren.find(c => spec.identTypes.has(c.type)); if (as) names.add(as.text); }
+  }
+  if (spec.loopTypes.has(scopeNode.type)) {
+    const init = scopeNode.childForFieldName('initializer') ?? scopeNode.childForFieldName('init');
+    if (init) for (const c of init.namedChildren) if (spec.declTypes.has(c.type)) collectDeclNames(c, spec, names);
+    const left = scopeNode.childForFieldName('left'); // for-of / for-in / range target
+    if (left) collectIdentLeaves(left, spec, names);
+  }
+  const scan = (n: CfgNode): void => {
+    if (n !== scopeNode && opensScope(n, spec)) return; // a deeper scope owns its own decls
+    if (n.type === 'for_in_clause') { const l = n.childForFieldName('left'); if (l) collectIdentLeaves(l, spec, names); }
+    if (spec.declTypes.has(n.type)) collectDeclNames(n, spec, names);
+    else if (spec.declContainerTypes.has(n.type)) for (const c of n.namedChildren) if (spec.declTypes.has(c.type)) collectDeclNames(c, spec, names);
+    for (const c of n.namedChildren) scan(c);
+  };
+  scan(scopeNode);
+  return names;
+}
+
+/**
+ * Map every identifier occurrence (by startIndex) to a scope-qualified key
+ * `name#scopeId`. A reference resolves to the nearest enclosing scope that
+ * declares the name; otherwise to the root scope (`name#0`, i.e. a parameter,
+ * an outer/free variable, or a global). This is what lets reaching-defs keep a
+ * shadowed inner `x` distinct from the outer `x`.
+ */
+function resolveScopes(body: CfgNode, spec: CfgLangSpec, params: string[]): Map<number, string> {
+  const occ = new Map<number, string>();
+  let nextId = 1;
+  const root = { id: 0, names: new Set<string>(params) };
+  for (const nm of scopeDeclaredNames(body, spec)) root.names.add(nm);
+  const stack: Array<{ id: number; names: Set<string> }> = [root];
+  const resolveRef = (name: string): string => {
+    for (let i = stack.length - 1; i >= 0; i--) if (stack[i].names.has(name)) return `${name}#${stack[i].id}`;
+    return `${name}#0`;
+  };
+  const visit = (n: CfgNode): void => {
+    const isScope = n !== body && opensScope(n, spec);
+    if (isScope) stack.push({ id: nextId++, names: scopeDeclaredNames(n, spec) });
+    if (spec.identTypes.has(n.type)) occ.set(n.startIndex, resolveRef(n.text));
+    for (const c of n.namedChildren) visit(c);
+    if (isScope) stack.pop();
+  };
+  visit(body);
+  return occ;
+}
+
 /**
  * Build the per-function CFG + reaching-definitions overlay from a function's
  * AST node, while its parse tree is live. Returns undefined for an unsupported
@@ -1059,7 +1227,10 @@ export function buildFunctionCfg(fnNode: CfgNode, language: string): FunctionCfg
     const params = extractParamNames(fnNode, spec);
     const paramLine = fnNode.startPosition.row + 1;
 
-    const builder = new CfgBuilder(spec);
+    // Resolve every identifier occurrence to a scope-qualified key so a shadowed
+    // inner declaration never conflates with the outer same-named variable.
+    const scopeKeys = resolveScopes(body, spec, params);
+    const builder = new CfgBuilder(spec, scopeKeys);
     builder.build(body);
 
     // Names that escape visible control flow (closure-mutated or address-taken)

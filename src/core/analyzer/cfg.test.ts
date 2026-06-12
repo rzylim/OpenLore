@@ -268,6 +268,74 @@ describe('logical-assignment and walrus do not drop dependences', () => {
   });
 });
 
+// ─── lexical scope, idioms & escape gaps (adversarial-audit regressions) ──────
+
+function defLinesTo(cfg: FunctionCfg, variable: string, useLine: number): number[] {
+  return [...new Set(cfg.defUse.filter(e => e.variable === variable && e.useLine === useLine).map(e => e.defLine))].sort((a, b) => a - b);
+}
+
+describe('lexical block scope (shadowing must not conflate variables)', () => {
+  it('TS: an inner block let shadow does not reach the outer use, nor drop it', async () => {
+    const lang = await tsLang();
+    // line 2 outer let x; line 3 inner block let x; line 4 return x (outer).
+    const cfg = cfgFor(`function f(){\n  let x = 1;\n  { let x = 2; console.log(x); }\n  return x;\n}`, lang, 'TypeScript', TS_FN);
+    expect(defLinesTo(cfg, 'x', 4)).toEqual([2]);           // outer x=1 reaches return
+    expect(cfg.defUse.some(e => e.defLine === 3 && e.useLine === 4)).toBe(false); // inner shadow does NOT
+  });
+
+  it('Go: an inner-block := shadow does not reach the outer use', async () => {
+    const lang = await goLang();
+    const cfg = cfgFor(`func f() int {\n\tx := 1\n\tif true {\n\t\tx := 2\n\t\t_ = x\n\t}\n\treturn x\n}`, lang, 'Go', GO_FN);
+    expect(defLinesTo(cfg, 'x', 7)).toEqual([2]);
+  });
+
+  it('TS: a loop counter shadowing an outer var does not corrupt the outer', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(){\n  let i = 100;\n  for (let i = 0; i < 3; i++) {}\n  return i;\n}`, lang, 'TypeScript', TS_FN);
+    expect(defLinesTo(cfg, 'i', 4)).toEqual([2]); // outer i=100, not the loop counter
+  });
+
+  it('Python: a comprehension variable is a separate scope (no false edge from an outer same-name)', async () => {
+    const lang = await pyLang();
+    const cfg = cfgFor(`def f(xs):\n    x = 5\n    ys = [x for x in xs]\n    return x`, lang, 'Python', PY_FN);
+    expect(cfg.defUse.some(e => e.variable === 'x' && e.useLine === 3)).toBe(false); // no edge INTO the comprehension
+    expect(defLinesTo(cfg, 'x', 4)).toEqual([2]); // outer x=5 reaches the return
+  });
+});
+
+describe('idioms & escape-detection gaps', () => {
+  it('x++ is recorded as a definition', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(){\n  let x = 0;\n  x++;\n  return x;\n}`, lang, 'TypeScript', TS_FN);
+    expect(defLinesTo(cfg, 'x', 4)).toEqual([3]);
+  });
+
+  it('x++ inside a closure marks the outer var as may', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(){\n  let n = 0;\n  [1].forEach(() => { n++; });\n  return n;\n}`, lang, 'TypeScript', TS_FN);
+    expect(cfg.defUse.find(e => e.variable === 'n' && e.useLine === 4)?.precision).toBe('may');
+  });
+
+  it('Go closure that mutates an outer local (expression_list LHS) is may', async () => {
+    const lang = await goLang();
+    const cfg = cfgFor(`func f() int {\n\tx := 0\n\tg := func() { x = 5 }\n\tg()\n\treturn x\n}`, lang, 'Go', GO_FN);
+    expect(cfg.defUse.find(e => e.variable === 'x' && e.useLine === 5)?.precision).toBe('may');
+  });
+
+  it('Python try/except/else: only except and else reach (try body overwritten by else)', async () => {
+    const lang = await pyLang();
+    const cfg = cfgFor(`def f():\n    x = 1\n    try:\n        x = 2\n    except Exception:\n        x = 3\n    else:\n        x = 4\n    return x`, lang, 'Python', PY_FN);
+    expect(defLinesTo(cfg, 'x', 9)).toEqual([6, 8]); // except(6) or else(8); NOT try(4)
+  });
+
+  it('a labeled loop keeps its loop structure and loop-carried dependence', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(){\n  let r = 0;\n  outer: for (let i=0;i<3;i++) {\n    r = r + 1;\n  }\n  return r;\n}`, lang, 'TypeScript', TS_FN);
+    expect(cfg.edges.some(e => e.kind === 'back')).toBe(true);
+    expect(defLinesTo(cfg, 'r', 4)).toEqual([2, 4]); // pre-loop and loop-carried
+  });
+});
+
 // ─── structural-validity safety net ───────────────────────────────────────────
 
 describe('structural validity guard', () => {
