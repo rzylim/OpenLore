@@ -241,6 +241,31 @@ describe('elif chains and destructuring', () => {
   });
 });
 
+// ─── escape analysis: no unsound `exact` for mutated-via-alias variables ──────
+
+describe('escaped variables are downgraded to may (sound exact)', () => {
+  it('a local mutated inside a closure is may, not exact', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(){\n  let x = 1;\n  const g = () => { x = 2; };\n  g();\n  return x;\n}`, lang, 'TypeScript', TS_FN);
+    const e = cfg.defUse.find(d => d.variable === 'x' && d.useLine === 5);
+    expect(e?.precision).toBe('may'); // the closure may have reassigned x
+  });
+
+  it('a Go local whose address is taken is may, not exact', async () => {
+    const lang = await goLang();
+    const cfg = cfgFor(`func f() int {\n\tx := 1\n\tp := &x\n\t*p = 2\n\treturn x\n}`, lang, 'Go', GO_FN);
+    const e = cfg.defUse.find(d => d.variable === 'x' && d.useLine === 5);
+    expect(e?.precision).toBe('may'); // a pointer can mutate x out of band
+  });
+
+  it('a read-only closure capture does not over-downgrade the outer var', async () => {
+    const lang = await tsLang();
+    const cfg = cfgFor(`function f(){\n  let z = 1;\n  const g = () => z + 1;\n  return z;\n}`, lang, 'TypeScript', TS_FN);
+    const e = cfg.defUse.find(d => d.variable === 'z' && d.useLine === 4);
+    expect(e?.precision).toBe('exact'); // g only reads z; z is not mutated
+  });
+});
+
 // ─── per-language coverage ───────────────────────────────────────────────────
 
 describe('multi-language CFG', () => {

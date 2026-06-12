@@ -803,6 +803,60 @@ function normalizeLValue(text: string): string {
   return text.replace(/\s+/g, '');
 }
 
+/**
+ * Collect the local names that ESCAPE the straightforward intra-procedural model
+ * and therefore cannot carry a sound `exact` dependence:
+ *   - a variable assigned inside a nested closure (the closure may run at any time
+ *     and reassign it), and
+ *   - a variable whose address is taken (`&x` in Go — a pointer can mutate it).
+ * Reaching-definitions edges for these names are downgraded to `may`. The set is
+ * deliberately OVER-approximated: a false inclusion only weakens precision (more
+ * `may`), it never produces an unsound `exact`.
+ */
+function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
+  const escaped = new Set<string>();
+
+  const collectClosureMutations = (fnNode: CfgNode): void => {
+    const bound = new Set<string>(extractParamNames(fnNode, spec));
+    const fbody = findBody(fnNode, spec);
+    if (!fbody) return;
+    // Names declared inside this closure are local to it (not outer mutations).
+    const collectBound = (n: CfgNode): void => {
+      if (n !== fnNode && spec.nestedFnTypes.has(n.type)) return; // a deeper closure has its own scope
+      if (spec.declTypes.has(n.type)) {
+        const nm = n.childForFieldName('name') ?? n.childForFieldName(spec.leftField);
+        if (nm && spec.identTypes.has(nm.type)) bound.add(nm.text);
+        for (const c of n.namedChildren) if (spec.identTypes.has(c.type)) bound.add(c.text);
+      }
+      for (const c of n.namedChildren) collectBound(c);
+    };
+    collectBound(fbody);
+    // A plain assignment to a name not bound in this closure mutates the outer scope.
+    const collectMut = (n: CfgNode): void => {
+      if (n !== fnNode && spec.nestedFnTypes.has(n.type)) { collectClosureMutations(n); return; }
+      if (spec.assignTypes.has(n.type) || spec.augAssignTypes.has(n.type)) {
+        const left = n.childForFieldName(spec.leftField) ?? n.namedChildren[0];
+        if (left && spec.identTypes.has(left.type) && !bound.has(left.text)) escaped.add(left.text);
+      }
+      for (const c of n.namedChildren) collectMut(c);
+    };
+    collectMut(fbody);
+  };
+
+  const walk = (n: CfgNode): void => {
+    if (spec.nestedFnTypes.has(n.type)) { collectClosureMutations(n); return; }
+    // Address-of (`&x`): a pointer to a local escapes scalar tracking.
+    if (n.type === 'unary_expression') {
+      const op = n.childForFieldName('operator');
+      const operand = n.childForFieldName('operand');
+      if (op?.text === '&' && operand && spec.identTypes.has(operand.type)) escaped.add(operand.text);
+    }
+    for (const c of n.namedChildren) walk(c);
+  };
+  walk(body);
+  return escaped;
+}
+
 // ============================================================================
 // REACHING DEFINITIONS
 // ============================================================================
@@ -824,7 +878,7 @@ interface DefSite {
  * Then, walking each block's ops in order, every use is wired to the defs of the
  * same variable that reach it.
  */
-function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: number): DefUseEdge[] {
+function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: number, escaped: Set<string>): DefUseEdge[] {
   const blocks = builder.blocks;
   const n = blocks.length;
 
@@ -920,7 +974,10 @@ function computeReachingDefs(builder: CfgBuilder, params: string[], paramLine: n
           for (const s of defs) {
             const d = defBySeq.get(s)!;
             // Edge precision: `may` if either endpoint is conservative.
-            const precision: DataFlowPrecision = (d.precision === 'may' || op.precision === 'may') ? 'may' : 'exact';
+            // A variable that escapes (closure-mutated or address-taken) can be
+            // changed outside the visible control flow, so its dependence is `may`.
+            const precision: DataFlowPrecision =
+              (d.precision === 'may' || op.precision === 'may' || escaped.has(op.variable)) ? 'may' : 'exact';
             const key = `${op.variable}|${d.line}|${op.line}|${precision}`;
             if (!emitted.has(key)) {
               emitted.add(key);
@@ -974,7 +1031,10 @@ export function buildFunctionCfg(fnNode: CfgNode, language: string): FunctionCfg
     const builder = new CfgBuilder(spec);
     builder.build(body);
 
-    const defUse = computeReachingDefs(builder, params, paramLine);
+    // Names that escape visible control flow (closure-mutated or address-taken)
+    // cannot carry a sound `exact` dependence — their edges are downgraded to `may`.
+    const escaped = collectEscapedVars(body, spec);
+    const defUse = computeReachingDefs(builder, params, paramLine, escaped);
 
     return {
       blocks: builder.blocks.map(b => ({ id: b.id, kind: b.kind })),

@@ -5064,3 +5064,13 @@ The reaching-definitions overlay enables value/parameter-granularity impact, but
 Dogfooding the overlay on real TS found three soundness/precision bugs: (1) try/catch and switch were treated as straight-line statements, so a catch-body or later-case definition spuriously KILLED the try-body / earlier-case definition in reaching-defs, omitting a real dependence (violates the spec's never-omit-a-real-dependence requirement); (2) closure captures of outer variables were labeled exact instead of may (violates DataFlowProvenanceLabeling); (3) nested-function params/locals leaked as outer uses. Fix: processTry models catch clauses as alternative paths from the same predecessor (both reach the join), with finally processed from the merge; processSwitch models each case as an alternative branch with language-specific fall-through (switchFallsThrough: TS/JS true, Go/Python false) so cases don't linearly kill each other; nested functions are no longer descended into as outer CFG — their free-variable reads become may closure-capture uses, their own params/locals excluded.
 
 **Consequences:** CfgLangSpec gains tryTypes/switchTypes/nestedFnTypes/switchFallsThrough. Reaching-defs is now sound across exception and multi-way control flow for the supported languages; closure-captured dependences are conservatively may. Verified deterministic and branch-structured on the real corpus (233 branch / 241 merge blocks).
+
+### Downgrade escaped (closure-mutated / address-taken) variables to may so exact is never unsound
+
+**Status:** Approved
+**Date:** 2026-06-12
+**ID:** 8192f32f
+
+The exact precision label is the load-bearing safety signal an agent trusts; a wrong exact is actively harmful context. Two unsound-exact holes were found by adversarial probing: (1) a local scalar reassigned inside a nested closure that is then invoked — the value at a later read is not necessarily the visible def; (2) a Go local whose address is taken (&x) and mutated through the pointer. Fix: a pre-pass (collectEscapedVars) collects names assigned inside any nested closure (excluding the closure's own params/locals) and names whose address is taken, and computeReachingDefs forces precision may for any edge whose variable escaped. The set is deliberately over-approximated because a false inclusion only weakens precision (more may), never produces an unsound exact. Read-only closure captures are NOT downgraded (verified), preserving precision.
+
+**Consequences:** exact now means soundly exact for the supported languages: a local-scalar def-use with no aliasing, closure mutation, or address-of. This makes the overlay safe for agents to trust the exact label. collectEscapedVars adds one linear pre-pass per function.
