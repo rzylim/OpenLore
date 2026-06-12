@@ -20,6 +20,11 @@ class Openlore < Formula
 
   def install
     system "npm", "install", *std_npm_args
+    if Hardware::CPU.arm?
+      rm_r Dir["#{libexec}/lib/node_modules/openlore/node_modules/**/prebuilds/darwin-x64"]
+    else
+      rm_r Dir["#{libexec}/lib/node_modules/openlore/node_modules/**/prebuilds/darwin-arm64"]
+    end
     bin.install_symlink Dir["#{libexec}/bin/*"]
   end
 
