@@ -20,6 +20,8 @@ vi.mock('./utils.js', () => ({
   functionsForDomain: vi.fn(() => []),
   readCachedContext: vi.fn(async () => null),
   isCacheFresh: vi.fn(async () => false),
+  queryTooLongError: vi.fn(() => null),
+  safeJoin: vi.fn((dir: string, p: string) => `${dir}/${p}`),
 }));
 
 vi.mock('../config-manager.js', () => ({

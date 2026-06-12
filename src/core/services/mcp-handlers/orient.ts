@@ -17,7 +17,7 @@
 import { join, relative } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import type { SerializedCallGraph } from '../../analyzer/call-graph.js';
-import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, readCachedContext, safeJoin } from './utils.js';
+import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, readCachedContext, safeJoin, queryTooLongError } from './utils.js';
 import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 import { isIacLanguage } from '../../analyzer/iac/types.js';
@@ -164,6 +164,7 @@ export async function handleOrient(
   tokenBudget?: number,
   lean = false,
 ): Promise<unknown> {
+  const tooLong = queryTooLongError(task, 'task'); if (tooLong) return tooLong;
   const absDir = await validateDirectory(directory);
   const outputDir = join(absDir, '.openlore', 'analysis');
 

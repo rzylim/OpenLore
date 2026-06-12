@@ -8,7 +8,7 @@ import { realpathSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { LLMContext } from '../../analyzer/artifact-generator.js';
 import { EdgeStore } from '../edge-store.js';
-import { ANALYSIS_STALE_THRESHOLD_MS, ARTIFACT_FINGERPRINT, ARTIFACT_LLM_CONTEXT, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR } from '../../../constants.js';
+import { ANALYSIS_STALE_THRESHOLD_MS, ARTIFACT_FINGERPRINT, ARTIFACT_LLM_CONTEXT, MAX_QUERY_LENGTH, OPENLORE_ANALYSIS_SUBDIR, OPENLORE_DIR } from '../../../constants.js';
 
 /** LLMContext with optional SQLite edge store attached (present when call-graph.db exists). */
 export type CachedContext = LLMContext & { edgeStore?: EdgeStore };
@@ -140,6 +140,20 @@ export function safeJoin(absDir: string, filePath: string): string {
     if (err instanceof Error && err.message.startsWith('Path escape blocked')) throw err;
   }
   return resolved;
+}
+
+/**
+ * Bound a free-text query/description argument before it drives an embedding call
+ * or BM25 tokenization (mcp-security: Bounded Computation — a hostile caller could
+ * otherwise send a multi-megabyte string and force unbounded work or a huge
+ * provider request). Returns an `{ error }` object to return verbatim when the
+ * input exceeds MAX_QUERY_LENGTH, or null when it is within bounds.
+ */
+export function queryTooLongError(query: unknown, field = 'query'): { error: string } | null {
+  if (typeof query === 'string' && query.length > MAX_QUERY_LENGTH) {
+    return { error: `${field} too long: ${query.length} characters (max ${MAX_QUERY_LENGTH}). Shorten the ${field}.` };
+  }
+  return null;
 }
 
 interface ContextCacheEntry {

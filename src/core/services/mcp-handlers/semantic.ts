@@ -19,7 +19,7 @@ import {
   OPENSPEC_SPECS_SUBDIR,
 } from '../../../constants.js';
 import { fileExists } from '../../../utils/command-helpers.js';
-import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain } from './utils.js';
+import { validateDirectory, loadMappingIndex, specsForFile, functionsForDomain, queryTooLongError } from './utils.js';
 import { expandHandle, applyTokenBudget, collapseExactDuplicates, omissionNote } from './progressive.js';
 import { readOpenLoreConfig } from '../config-manager.js';
 
@@ -141,6 +141,7 @@ export async function handleSearchCode(
   minFanIn?: number,
   tokenBudget?: number
 ): Promise<unknown> {
+  const tooLong = queryTooLongError(query); if (tooLong) return tooLong;
   const absDir = await validateDirectory(directory);
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
@@ -261,6 +262,7 @@ export async function handleSuggestInsertionPoints(
   limit = 5,
   language?: string
 ): Promise<unknown> {
+  const tooLong = queryTooLongError(description, 'description'); if (tooLong) return tooLong;
   const absDir = await validateDirectory(directory);
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
@@ -459,6 +461,7 @@ export async function handleSearchSpecs(
   domain?: string,
   section?: string
 ): Promise<unknown> {
+  const tooLong = queryTooLongError(query); if (tooLong) return tooLong;
   const absDir = await validateDirectory(directory);
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 
@@ -526,6 +529,7 @@ export async function handleUnifiedSearch(
   domain?: string,
   section?: string
 ): Promise<unknown> {
+  const tooLong = queryTooLongError(query); if (tooLong) return tooLong;
   const absDir = await validateDirectory(directory);
   const outputDir = join(absDir, OPENLORE_DIR, OPENLORE_ANALYSIS_SUBDIR);
 

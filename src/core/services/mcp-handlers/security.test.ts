@@ -16,6 +16,7 @@ import {
   sanitizeMcpError,
   readCachedContext,
   loadMappingIndex,
+  queryTooLongError,
   _resetContextCacheForTesting,
   clearMappingCache,
 } from './utils.js';
@@ -23,7 +24,9 @@ import { redactSecrets, redactSecretString } from '../secret-redaction.js';
 import { TOOL_DEFINITIONS, toolAnnotations } from '../../../cli/commands/mcp.js';
 import { handleAnnotateStory } from './change.js';
 import { handleGetFunctionBody } from './analysis.js';
-import { REPO_CONTENT_PROVENANCE } from '../../../constants.js';
+import { handleSearchCode } from './semantic.js';
+import { handleOrient } from './orient.js';
+import { REPO_CONTENT_PROVENANCE, MAX_QUERY_LENGTH } from '../../../constants.js';
 
 const SRC = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
 // Server + analysis + daemon surface. Excludes src/pi (the VS Code extension launcher,
@@ -479,6 +482,42 @@ describe('Repo-Derived Content Is Data, Not Instructions (mcp-security)', () => 
     // Every description is a non-empty server-authored string.
     for (const t of TOOL_DEFINITIONS) {
       expect(typeof t.description === 'string' && t.description.length > 0, `${t.name} needs a static description`).toBe(true);
+    }
+  });
+});
+
+// ── Bounded Computation — query length (mcp-security) ──────────────────────────
+
+describe('Bounded Computation — free-text query length (mcp-security)', () => {
+  it('queryTooLongError accepts within-bound input and rejects beyond MAX_QUERY_LENGTH', () => {
+    expect(queryTooLongError('a'.repeat(MAX_QUERY_LENGTH))).toBeNull();
+    expect(queryTooLongError('')).toBeNull();
+    expect(queryTooLongError(undefined)).toBeNull(); // non-strings are not "too long"
+    const over = queryTooLongError('a'.repeat(MAX_QUERY_LENGTH + 1));
+    expect(over).not.toBeNull();
+    expect(over!.error).toMatch(/too long/i);
+    // Custom field name surfaces in the message.
+    expect(queryTooLongError('x'.repeat(MAX_QUERY_LENGTH + 1), 'task')!.error).toMatch(/task too long/i);
+  });
+
+  it('search_code rejects an oversized query before doing any work', async () => {
+    const root = realpathRoot(mkdtempSync(join(tmpdir(), 'ol-sec-q-')));
+    try {
+      // The guard runs before the index check, so no analysis setup is needed.
+      const res = await handleSearchCode(root, 'q'.repeat(MAX_QUERY_LENGTH + 1)) as Record<string, unknown>;
+      expect(String(res.error)).toMatch(/too long/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('orient rejects an oversized task', async () => {
+    const root = realpathRoot(mkdtempSync(join(tmpdir(), 'ol-sec-q2-')));
+    try {
+      const res = await handleOrient(root, 't'.repeat(MAX_QUERY_LENGTH + 1)) as Record<string, unknown>;
+      expect(String(res.error)).toMatch(/too long/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });
