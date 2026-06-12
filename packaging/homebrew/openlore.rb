@@ -20,6 +20,11 @@ class Openlore < Formula
 
   def install
     system "npm", "install", *std_npm_args
+    os = OS.mac? ? "darwin" : "linux"
+    native_platform = "#{os}-#{Hardware::CPU.arm? ? "arm64" : "x64"}"
+    Dir["#{libexec}/lib/node_modules/openlore/node_modules/**/prebuilds/*/"].each do |dir|
+      rm_r dir if File.basename(dir) != native_platform
+    end
     bin.install_symlink Dir["#{libexec}/bin/*"]
   end
 
