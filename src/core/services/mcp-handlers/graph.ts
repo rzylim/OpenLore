@@ -530,6 +530,9 @@ export async function handleAnalyzeImpact(
   depth = 2,
   directResolvedOnly = false,
 ): Promise<unknown> {
+  // Clamp to the documented maximum so a hostile depth (e.g. 1e9) can't drive an
+  // unbounded BFS over an adversarial graph (mcp-security: Bounded Computation).
+  depth = Math.max(1, Math.min(depth, SUBGRAPH_MAX_DEPTH_LIMIT));
   const absDir = await validateDirectory(directory);
   const ctx = await readCachedContext(absDir);
 
