@@ -886,7 +886,7 @@ function extractDeclaration(
  * so arrow/function-expression bodies and params are analyzed too. Fail-soft:
  * returns undefined for unsupported languages or any analysis surprise.
  */
-function buildCfgFor(fnNode: Parser.SyntaxNode, language: string): FunctionCfg | undefined {
+function buildCfgFor(fnNode: CfgNode, language: string): FunctionCfg | undefined {
   let target = fnNode;
   if (!fnNode.childForFieldName('body')) {
     // Dig (breadth-first) for the node that actually owns the body: a TS arrow/
@@ -2092,12 +2092,13 @@ async function extractByQueries(
   spec: QueryLangSpec,
   filePath: string,
   content: string,
-): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[] }> {
+): Promise<{ nodes: FunctionNode[]; rawEdges: RawEdge[]; cfg: Map<string, FunctionCfg> }> {
   const handle = await spec.loader();
-  if (!handle) return { nodes: [], rawEdges: [] };
+  if (!handle) return { nodes: [], rawEdges: [], cfg: new Map() };
 
   return handle.withTree(content, (_root, runQuery) => {
     const nodes: FunctionNode[] = [];
+    const cfg = new Map<string, FunctionCfg>();
     for (const match of runQuery(spec.fnQuery)) {
       const nameCapture = match.captures.find(c => c.name === 'fn.name');
       const nodeCapture = match.captures.find(c => c.name === 'fn.node');
@@ -2108,6 +2109,11 @@ async function extractByQueries(
         ?? spec.extraClassName?.(fnNode);
       const id = className ? `${filePath}::${className}.${name}` : `${filePath}::${name}`;
       if (nodes.some(n => n.id === id)) continue; // collapse multi-clause/overloads to one node
+      // CFG/def-use overlay (spec: add-intraprocedural-cfg-dataflow-overlay) for
+      // spec-08 languages that have a CfgLangSpec; others fail soft to no overlay.
+      // Built inside withTree while the (possibly WASM) tree is live.
+      const fnCfg = buildCfgFor(fnNode as unknown as CfgNode, spec.language);
+      if (fnCfg) cfg.set(id, fnCfg);
       nodes.push({
         id, name, filePath, className,
         isAsync: false,
@@ -2138,7 +2144,7 @@ async function extractByQueries(
       seen.add(key);
       rawEdges.push({ callerId: caller.id, calleeName, line: nodeCapture.node.startPosition.row + 1, calleeObject });
     }
-    return { nodes, rawEdges };
+    return { nodes, rawEdges, cfg };
   });
 }
 

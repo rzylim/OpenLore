@@ -627,3 +627,39 @@ describe('extended-language soundness fixes', () => {
     expect(defLinesTo(cfg, 'x', 4)).toEqual([2, 3]); // both the original and the conditional def reach
   });
 });
+
+// ─── spec-08 native languages (C, C#, PHP) ────────────────────────────────────
+
+async function cLang(): Promise<object> { return (await import('tree-sitter-c')).default as object; }
+async function csharpLang(): Promise<object> { return (await import('tree-sitter-c-sharp')).default as object; }
+async function phpLang(): Promise<object> { const m: any = await import('tree-sitter-php'); return m.default.php as object; }
+
+describe('C overlay (via C++ spec)', () => {
+  it('branch + loop + switch (sound), params extracted', async () => {
+    const lang = await cLang();
+    const cfg = cfgFor('int f(int a){\n  int x = 0;\n  if(a>0){ x=1; } else { x=2; }\n  while(a>0){ x = x + a; a--; }\n  switch(a){\n    case 1: x = 10; break;\n    default: x = 20;\n  }\n  return x;\n}', lang, 'C', ['function_definition']);
+    expect(cfg.params).toEqual(['a']);
+    expect(cfg.edges.some(e => e.kind === 'back')).toBe(true);
+    expect(defLinesTo(cfg, 'x', 9)).toEqual([6, 7]); // both switch arms reach
+  });
+});
+
+describe('C# overlay', () => {
+  it('branch + loop + switch_section (sound)', async () => {
+    const lang = await csharpLang();
+    const cfg = cfgFor('class C{ int f(int a){\n  int x = 0;\n  if(a>0){ x=1; } else { x=2; }\n  while(a>0){ x = x + a; a--; }\n  switch(a){\n    case 1: x = 10; break;\n    default: x = 20;\n  }\n  return x;\n} }', lang, 'C#', ['method_declaration']);
+    expect(cfg.params).toEqual(['a']);
+    expect(cfg.edges.some(e => e.kind === 'back')).toBe(true);
+    expect(defLinesTo(cfg, 'x', 9)).toEqual([6, 7]);
+  });
+});
+
+describe('PHP overlay', () => {
+  it('branch + loop + switch (sound), $-params extracted', async () => {
+    const lang = await phpLang();
+    const cfg = cfgFor('<?php function f($a){\n  $x = 0;\n  if($a > 0){ $x = 1; } else { $x = 2; }\n  while($a > 0){ $x = $x + $a; }\n  switch($a){\n    case 1: $x = 10; break;\n    default: $x = 20;\n  }\n  return $x;\n}', lang, 'PHP', ['function_definition']);
+    expect(cfg.params).toEqual(['$a']);
+    expect(cfg.edges.some(e => e.kind === 'back')).toBe(true);
+    expect(defLinesTo(cfg, '$x', 9)).toEqual([6, 7]);
+  });
+});

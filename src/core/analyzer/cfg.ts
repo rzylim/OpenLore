@@ -91,7 +91,9 @@ export interface CfgNode {
   endIndex: number;
   startPosition: { row: number };
   namedChildren: CfgNode[];
-  children: CfgNode[];
+  /** All children incl. anonymous tokens. Optional — the soft-loaded (spec-08)
+   *  node interface exposes only namedChildren. */
+  children?: CfgNode[];
   childForFieldName(field: string): CfgNode | null;
 }
 
@@ -404,6 +406,72 @@ const RUBY_SPEC: CfgLangSpec = {
   paramsField: 'parameters',
 };
 
+const CSHARP_SPEC: CfgLangSpec = {
+  ifTypes: new Set(['if_statement']),
+  loopTypes: new Set(['while_statement', 'for_statement', 'foreach_statement', 'do_statement']),
+  tryTypes: new Set(['try_statement']),
+  switchTypes: new Set(['switch_statement']),
+  nestedFnTypes: new Set(['lambda_expression', 'anonymous_method_expression', 'local_function_statement']),
+  switchFallsThrough: false,
+  blockScoped: true,
+  comprehensionTypes: new Set([]),
+  returnTypes: new Set(['return_statement']),
+  breakTypes: new Set(['break_statement']),
+  continueTypes: new Set(['continue_statement']),
+  throwTypes: new Set(['throw_statement']),
+  blockTypes: new Set(['block']),
+  assignTypes: new Set(['assignment_expression']),
+  augAssignTypes: new Set([]),
+  declTypes: new Set(['variable_declarator']),
+  declContainerTypes: new Set(['local_declaration_statement', 'variable_declaration']),
+  memberTypes: new Set(['member_access_expression']),
+  subscriptTypes: new Set(['element_access_expression']),
+  identTypes: new Set(['identifier']),
+  callTypes: new Set(['invocation_expression', 'object_creation_expression']),
+  callNameField: 'function',
+  updateTypes: new Set(['postfix_unary_expression', 'prefix_unary_expression']),
+  conditionField: 'condition',
+  consequenceField: 'consequence',
+  alternativeField: 'alternative',
+  bodyField: 'body',
+  leftField: 'left',
+  rightField: 'right',
+  paramsField: 'parameters',
+};
+
+const PHP_SPEC: CfgLangSpec = {
+  ifTypes: new Set(['if_statement']),
+  loopTypes: new Set(['while_statement', 'for_statement', 'foreach_statement', 'do_statement']),
+  tryTypes: new Set(['try_statement']),
+  switchTypes: new Set(['switch_statement']),
+  nestedFnTypes: new Set(['anonymous_function_creation_expression', 'arrow_function', 'function_definition', 'method_declaration']),
+  switchFallsThrough: true,
+  blockScoped: false,
+  comprehensionTypes: new Set([]),
+  returnTypes: new Set(['return_statement']),
+  breakTypes: new Set(['break_statement']),
+  continueTypes: new Set(['continue_statement']),
+  throwTypes: new Set(['throw_expression', 'throw_statement']),
+  blockTypes: new Set(['compound_statement']),
+  assignTypes: new Set(['assignment_expression']),
+  augAssignTypes: new Set(['augmented_assignment_expression']),
+  declTypes: new Set([]),
+  declContainerTypes: new Set([]),
+  memberTypes: new Set(['member_access_expression']),
+  subscriptTypes: new Set(['subscript_expression']),
+  identTypes: new Set(['variable_name']),
+  callTypes: new Set(['function_call_expression', 'member_call_expression', 'object_creation_expression']),
+  callNameField: 'function',
+  updateTypes: new Set(['update_expression']),
+  conditionField: 'condition',
+  consequenceField: 'body',
+  alternativeField: 'alternative',
+  bodyField: 'body',
+  leftField: 'left',
+  rightField: 'right',
+  paramsField: 'parameters',
+};
+
 const SPEC_BY_LANGUAGE: Record<string, CfgLangSpec> = {
   TypeScript: TS_SPEC,
   JavaScript: TS_SPEC,
@@ -411,6 +479,9 @@ const SPEC_BY_LANGUAGE: Record<string, CfgLangSpec> = {
   Go: GO_SPEC,
   Java: JAVA_SPEC,
   'C++': CPP_SPEC,
+  C: CPP_SPEC, // C is a syntactic subset of C++; the same node types apply.
+  'C#': CSHARP_SPEC,
+  PHP: PHP_SPEC,
   Rust: RUST_SPEC,
   Ruby: RUBY_SPEC,
 };
@@ -822,6 +893,7 @@ class CfgBuilder {
       ty === 'expression_case' || ty === 'default_case' || ty === 'type_case' || // Go
       ty === 'case_statement' ||                               // C/C++
       ty === 'switch_block_statement_group' || ty === 'switch_rule' || // Java (colon + arrow)
+      ty === 'switch_section' || ty === 'default_statement' || // C# / PHP
       ty === 'match_arm' ||                                    // Rust
       ty === 'when' || ty === 'else';                          // Ruby (when + else)
     const cases = caseContainer.namedChildren.filter(c => isCaseNode(c.type));
@@ -886,6 +958,14 @@ class CfgBuilder {
       const labels = cs.namedChildren.filter(c => c.type === 'switch_label');
       const stmts = cs.namedChildren.filter(c => c.type !== 'switch_label').flatMap(b => this.stmtChildren(b));
       const isDefault = labels.some(l => l.text.includes('default'));
+      return { labels, stmts, isDefault };
+    }
+    if (t === 'switch_section') { // C#: (case label | pattern)* + statements
+      const isLabel = (c: CfgNode): boolean =>
+        c.type.endsWith('_switch_label') || c.type.endsWith('_pattern');
+      const labels = cs.namedChildren.filter(isLabel);
+      const stmts = cs.namedChildren.filter(c => !isLabel(c));
+      const isDefault = labels.length === 0 || labels.some(l => l.type.includes('default') || l.text.trim().startsWith('default'));
       return { labels, stmts, isDefault };
     }
     // TS switch_case/switch_default, C/C++ case_statement, Go expression_case/etc.
@@ -1265,7 +1345,7 @@ function collectEscapedVars(body: CfgNode, spec: CfgLangSpec): Set<string> {
     // Address-of (`&x`): a pointer to a local escapes scalar tracking. Go uses a
     // `unary_expression` with `&`; C/C++ use a `pointer_expression` with `&`.
     if (n.type === 'unary_expression' || n.type === 'pointer_expression') {
-      const op = n.childForFieldName('operator') ?? n.children.find(c => c.text === '&' || c.text === '*');
+      const op = n.childForFieldName('operator') ?? n.children?.find(c => c.text === '&' || c.text === '*');
       const operand = n.childForFieldName('operand') ?? n.childForFieldName('argument') ?? n.namedChildren[0];
       if (op?.text === '&' && operand && spec.identTypes.has(operand.type)) escaped.add(operand.text);
     }
@@ -1707,13 +1787,15 @@ function extractParamNames(fnNode: CfgNode, spec: CfgLangSpec): string[] {
     ?? findDescendantOfType(fnNode, 'parameter_list', 4);
   if (!params) return [];
   const names: string[] = [];
+  const isBinder = (ty: string): boolean => ty === 'identifier' || spec.identTypes.has(ty); // PHP: variable_name
   const visit = (n: CfgNode): void => {
     // A parameter's binding identifier: required_parameter/optional_parameter
-    // (TS), typed_parameter/identifier (Python), parameter_declaration (Go).
-    if (n.type === 'identifier') { names.push(n.text); return; }
+    // (TS), typed_parameter/identifier (Python), parameter_declaration (Go),
+    // simple_parameter/variable_name (PHP).
+    if (isBinder(n.type)) { names.push(n.text); return; }
     for (const c of n.namedChildren) {
       // Only descend into parameter wrappers, not default-value expressions.
-      if (c.type === 'identifier') { names.push(c.text); return; }
+      if (isBinder(c.type)) { names.push(c.text); return; }
       if (
         c.type.includes('parameter') || c.type === 'pattern' ||
         c.type === 'tuple_pattern' || c.type === 'object_pattern' || c.type === 'array_pattern'
