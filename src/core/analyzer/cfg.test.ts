@@ -689,3 +689,27 @@ describe('PHP/C# indirection escapes (no unsound exact)', () => {
     expect(o.defUse.find(e => e.variable === 'x' && e.useLine === 4)?.precision).toBe('may');
   });
 });
+
+// ─── language contract guard (CI-protected: lock the supported/fail-soft set) ──
+
+describe('language contract: supported set + fail-soft for everything else', () => {
+  // Every code language OpenLore detects (signature-extractor.ts detectLanguage).
+  const OVERLAY_LANGS = ['TypeScript', 'JavaScript', 'Python', 'Go', 'Java', 'C++', 'Rust', 'Ruby', 'C', 'C#', 'PHP'];
+  const FAIL_SOFT_LANGS = ['Kotlin', 'Swift', 'Scala', 'Dart', 'Lua', 'Elixir', 'Bash',
+    'Terraform', 'Kubernetes', 'Helm', 'CloudFormation', 'Ansible', 'unknown', 'COBOL'];
+
+  it('cfgSupportsLanguage matches the documented overlay set exactly', () => {
+    for (const l of OVERLAY_LANGS) expect(cfgSupportsLanguage(l), `${l} should be supported`).toBe(true);
+    for (const l of FAIL_SOFT_LANGS) expect(cfgSupportsLanguage(l), `${l} should NOT be supported`).toBe(false);
+  });
+
+  it('buildFunctionCfg returns undefined (never throws) for every unsupported language', async () => {
+    // Use a real TS function node; the language string is what gates support.
+    const tree = parse('function f(){ let x = 1; return x; }', await tsLang());
+    const fn = firstOfType(tree.rootNode, TS_FN)!;
+    for (const l of FAIL_SOFT_LANGS) {
+      expect(() => buildFunctionCfg(fn as unknown as CfgNode, l), `${l} must not throw`).not.toThrow();
+      expect(buildFunctionCfg(fn as unknown as CfgNode, l), `${l} must yield no overlay`).toBeUndefined();
+    }
+  });
+});
