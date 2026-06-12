@@ -21,9 +21,8 @@
 
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { validateDirectory, readCachedContext } from './utils.js';
+import { validateDirectory, readCachedContext, safeJoin } from './utils.js';
 import { isGitRepository, resolveBaseRef, validateGitRef, getChangedFiles } from '../../drift/git-diff.js';
 import { CallGraphBuilder, serializeCallGraph } from '../../analyzer/call-graph.js';
 import { detectLanguage } from '../../analyzer/signature-extractor.js';
@@ -141,7 +140,12 @@ export async function handleStructuralDiff(input: StructuralDiffInput): Promise<
     if (c.status !== 'deleted') {
       newContent = input.headRef
         ? await fileAtRef(absDir, input.headRef, c.path)
-        : await readFile(join(absDir, c.path), 'utf-8').catch(() => '');
+        // Confine the working-tree read to the root (defense-in-depth: c.path is
+        // git-derived, but safeJoin guarantees no escape — mcp-security).
+        : await (async () => {
+            try { return await readFile(safeJoin(absDir, c.path), 'utf-8'); }
+            catch { return ''; }
+          })();
     }
     if (oldContent) oldFiles.push({ path: c.path, content: oldContent, language: lang });
     if (newContent) newFiles.push({ path: c.path, content: newContent, language: lang });
