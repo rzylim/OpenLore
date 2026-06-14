@@ -10,13 +10,14 @@ import { access, stat, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
-export type AgentName = 'claude-code' | 'cursor' | 'cline' | 'continue' | 'agents-md';
+export type AgentName = 'claude-code' | 'cursor' | 'cline' | 'continue' | 'opencode' | 'agents-md';
 
 export const ALL_AGENTS: AgentName[] = [
   'claude-code',
   'cursor',
   'cline',
   'continue',
+  'opencode',
   'agents-md',
 ];
 
@@ -92,6 +93,13 @@ async function detectInDir(dir: string): Promise<DetectedSurface[]> {
     if (markers.length) found.push({ agent: 'continue', root: dir, markers });
   }
 
+  // opencode
+  {
+    const markers: string[] = [];
+    if (await exists(join(dir, '.opencode', 'opencode.json'))) markers.push('.opencode/opencode.json');
+    if (markers.length) found.push({ agent: 'opencode', root: dir, markers });
+  }
+
   return found;
 }
 
@@ -123,7 +131,14 @@ export async function detect(startDir: string): Promise<DetectedSurface[]> {
         out.push({ agent: 'claude-code', root: resolve(startDir), markers: ['(~/.claude present)'] });
       }
     } catch {
-      /* no ~/.claude — fall through to the AGENTS.md fallback */
+      /* no ~/.claude — fall through checks */
+    }
+    try {
+      if (await exists(join(homedir(), '.config', 'opencode', 'opencode.json'))) {
+        out.push({ agent: 'opencode', root: resolve(startDir), markers: ['(~/.config/opencode/opencode.json present)'] });
+      }
+    } catch {
+      /* no ~/.config/opencode — fall through */
     }
   }
 

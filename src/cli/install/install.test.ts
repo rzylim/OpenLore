@@ -240,4 +240,82 @@ describe('openlore install (end-to-end)', () => {
     expect(await exists(join(dir, '.cursor/rules/openlore.mdc'))).toBe(true);
     expect(await exists(join(dir, 'AGENTS.md'))).toBe(true); // universal fallback
   });
+
+  // ───── opencode adapter ───────────────────────────────────────────────
+
+  it('opencode install creates .opencode/plugins/agent-guard.ts', async () => {
+    const code = await runInstall({ cwd: dir, agent: 'opencode', analyze: false });
+    expect(code).toBe(0);
+    const content = await readFile(join(dir, '.opencode/plugins/agent-guard.ts'), 'utf8');
+    expect(content).toContain('// @generated openlore-install');
+    expect(content).toContain('npx');
+    expect(content).toContain('openlore');
+    expect(content).toContain('orient');
+  });
+
+  it('opencode install created file contains orient spawn in experimental.chat.system.transform', async () => {
+    const code = await runInstall({ cwd: dir, agent: 'opencode', analyze: false });
+    expect(code).toBe(0);
+    const content = await readFile(join(dir, '.opencode/plugins/agent-guard.ts'), 'utf8');
+    expect(content).toContain('"experimental.chat.system.transform"');
+    expect(content).toContain('spawn("npx", ["--yes", "openlore", "orient", "--json"]');
+  });
+
+  it('re-running opencode install is a no-op (exit 0, file unchanged)', async () => {
+    await runInstall({ cwd: dir, agent: 'opencode', analyze: false });
+    const before = await readFile(join(dir, '.opencode/plugins/agent-guard.ts'), 'utf8');
+    const code = await runInstall({ cwd: dir, agent: 'opencode', analyze: false });
+    expect(code).toBe(0);
+    const after = await readFile(join(dir, '.opencode/plugins/agent-guard.ts'), 'utf8');
+    expect(after).toBe(before);
+  });
+
+  it('opencode --uninstall removes agent-guard.ts', async () => {
+    await runInstall({ cwd: dir, agent: 'opencode', analyze: false });
+    expect(await exists(join(dir, '.opencode/plugins/agent-guard.ts'))).toBe(true);
+    await runInstall({ cwd: dir, agent: 'opencode', uninstall: true });
+    expect(await exists(join(dir, '.opencode/plugins/agent-guard.ts'))).toBe(false);
+  });
+
+  it('pre-existing non-OpenLore files in .opencode/plugins/ survive uninstall', async () => {
+    await mkdir(join(dir, '.opencode/plugins'), { recursive: true });
+    const otherPlugin = 'export const MyPlugin = {};\n';
+    await writeFile(join(dir, '.opencode/plugins/my-plugin.ts'), otherPlugin, 'utf8');
+    await runInstall({ cwd: dir, agent: 'opencode', analyze: false });
+    await runInstall({ cwd: dir, agent: 'opencode', uninstall: true });
+    expect(await exists(join(dir, '.opencode/plugins/agent-guard.ts'))).toBe(false);
+    expect(await readFile(join(dir, '.opencode/plugins/my-plugin.ts'), 'utf8')).toBe(otherPlugin);
+  });
+
+  it('opencode --uninstall refuses to remove a non-OpenLore plugin (no marker)', async () => {
+    await mkdir(join(dir, '.opencode/plugins'), { recursive: true });
+    const unknown = 'export const Foo = {};\n';
+    await writeFile(join(dir, '.opencode/plugins/agent-guard.ts'), unknown, 'utf8');
+    await runInstall({ cwd: dir, agent: 'opencode', uninstall: true });
+    expect(await readFile(join(dir, '.opencode/plugins/agent-guard.ts'), 'utf8')).toBe(unknown);
+  });
+
+  it('opencode --force overwrites a non-OpenLore plugin at the same path', async () => {
+    await mkdir(join(dir, '.opencode/plugins'), { recursive: true });
+    const unknown = 'export const Foo = {};\n';
+    await writeFile(join(dir, '.opencode/plugins/agent-guard.ts'), unknown, 'utf8');
+    const code = await runInstall({ cwd: dir, agent: 'opencode', force: true, analyze: false });
+    expect(code).toBe(0);
+    const content = await readFile(join(dir, '.opencode/plugins/agent-guard.ts'), 'utf8');
+    expect(content).toContain('// @generated openlore-install');
+  });
+
+  it('opencode --dry-run writes nothing', async () => {
+    const code = await runInstall({ cwd: dir, agent: 'opencode', dryRun: true, analyze: false });
+    expect(code).toBe(0);
+    expect(await exists(join(dir, '.opencode/plugins/agent-guard.ts'))).toBe(false);
+  });
+
+  it('opencode is auto-detected when .opencode/opencode.json exists', async () => {
+    await mkdir(join(dir, '.opencode'), { recursive: true });
+    await writeFile(join(dir, '.opencode/opencode.json'), JSON.stringify({}), 'utf8');
+    const code = await runInstall({ cwd: dir, analyze: false });
+    expect(code).toBe(0);
+    expect(await exists(join(dir, '.opencode/plugins/agent-guard.ts'))).toBe(true);
+  });
 });

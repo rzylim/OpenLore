@@ -18,6 +18,7 @@ import { claudeCodeAdapter } from './adapters/claude-code.js';
 import { cursorAdapter } from './adapters/cursor.js';
 import { clineAdapter } from './adapters/cline.js';
 import { continueAdapter } from './adapters/continue.js';
+import { opencodeAdapter } from './adapters/opencode.js';
 
 const ADAPTERS: Record<AgentName, Adapter> = {
   'agents-md': agentsMdAdapter,
@@ -25,6 +26,7 @@ const ADAPTERS: Record<AgentName, Adapter> = {
   cursor: cursorAdapter,
   cline: clineAdapter,
   continue: continueAdapter,
+  opencode: opencodeAdapter,
 };
 
 async function loadTemplate(): Promise<string> {
@@ -214,7 +216,7 @@ export const installCommand = new Command('install')
     'One-command setup: configure agent surfaces (Claude Code, Cursor, Cline, Continue, AGENTS.md) ' +
     'to call orient(), then build the index so orient works on your first session.'
   )
-  .option('--agent <name>', 'Install only for a specific surface (claude-code, cursor, cline, continue, agents-md)')
+  .option('--agent <name>', 'Install only for a specific surface (claude-code, cursor, cline, continue, opencode, agents-md)')
   .option('--dry-run', 'Print the planned changes without writing any files', false)
   .option('--force', 'Overwrite OpenLore-managed blocks even if hand-edited', false)
   .option('--uninstall', 'Remove OpenLore-managed blocks and entries', false)
