@@ -782,6 +782,17 @@ describe('handleAnalyzeImpact — value-level opt-in', () => {
     expect(vl.reason).toContain('zzz');
     expect((result.blastRadius as { downstream: number }).downstream).toBe(2);
   });
+
+  it('falls back (not throws) when the overlay store errors', async () => {
+    vi.mocked(readCachedContext).mockResolvedValueOnce({ edgeStore: store } as never);
+    // A corrupt/erroring overlay must never fail the tool — value-level is
+    // strictly best-effort and degrades to the full function-granularity result.
+    const spy = vi.spyOn(store, 'getCfg').mockImplementation(() => { throw new Error('boom'); });
+    const result = await handleAnalyzeImpact(dir, 'entry', 2, false, true, 'a') as Record<string, unknown>;
+    expect((result.valueLevel as { applied: boolean }).applied).toBe(false);
+    expect((result.blastRadius as { downstream: number }).downstream).toBe(2);
+    spy.mockRestore();
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

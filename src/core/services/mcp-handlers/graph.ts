@@ -589,6 +589,7 @@ export async function handleAnalyzeImpact(
   let valueLevelInfo: { applied: boolean; parameter?: string; reason?: string; dataDependentCallees?: number; precision?: string } | undefined;
   let downstreamMap: Map<string, number>;
   if (valueLevel && seeds.length === 1) {
+   try {
     const cfg = ctx.edgeStore.getCfg(seeds[0].id);
     // The value-level query is well-posed only when its target resolves in the
     // overlay: a named valueParam must be a parameter or a tracked local; an
@@ -626,6 +627,14 @@ export async function handleAnalyzeImpact(
         precision: 'may (data-dependence crosses the call boundary)',
       };
     }
+   } catch (error) {
+     // Value-level is strictly best-effort: any overlay error (corrupt blob, a
+     // builder surprise) falls back to the full function-granularity blast radius
+     // rather than failing analyze_impact.
+     if (process.env.DEBUG) console.debug(`[value-level] analyze_impact fell back: ${(error as Error).message}`);
+     valueLevelInfo = { applied: false, reason: 'value-level overlay unavailable (error); returning function-granularity result' };
+     downstreamMap = bfsFromDB(seedIds, 'forward', depth, ctx.edgeStore, bfsOpts);
+   }
   } else {
     downstreamMap = bfsFromDB(seedIds, 'forward', depth, ctx.edgeStore, bfsOpts);
   }
@@ -1032,6 +1041,7 @@ export async function handleTraceExecutionPath(
   let allowedFirstHop: Map<string, Set<string>> | undefined;
   let valueLevelInfo: { applied: boolean; parameter?: string; reason?: string } | undefined;
   if (valueLevel && ctx.edgeStore) {
+   try {
     const { valueReachableLines } = await import('../../analyzer/cfg.js');
     allowedFirstHop = new Map();
     let anyOverlay = false;
@@ -1057,6 +1067,13 @@ export async function handleTraceExecutionPath(
       ? { applied: true, parameter: valueParam ?? '(all parameters)' }
       : { applied: false, reason: 'no resolvable value-level overlay for the entry function(s) (no overlay, or the value is not a parameter/local); returning function-granularity paths' };
     if (!anyOverlay) allowedFirstHop = undefined;
+   } catch (error) {
+     // Value-level is strictly best-effort: any overlay error falls back to the
+     // original function-granularity DFS rather than failing the trace.
+     if (process.env.DEBUG) console.debug(`[value-level] trace_execution_path fell back: ${(error as Error).message}`);
+     allowedFirstHop = undefined;
+     valueLevelInfo = { applied: false, reason: 'value-level overlay unavailable (error); returning function-granularity paths' };
+   }
   }
 
   const targetIds = new Set(targetNodes.map(n => n.id));
